@@ -187,6 +187,11 @@ export function SiteDataProvider({ children }) {
         const home = await api.getHome(forceBust ? { bust: Date.now() } : {})
         if (!alive) return
         const next = normalize(home)
+        if (Array.isArray(home.subcategories) && home.subcategories.length) {
+          setSubs(home.subcategories)
+        } else {
+          loadSubs()
+        }
         newsSkip.current = (next.recent || []).length
         newsDone.current = next.hasMoreNews === false
         setData((prev) => {
@@ -261,7 +266,6 @@ export function SiteDataProvider({ children }) {
     }
 
     loadHome(false)
-    loadSubs()
 
     // 2. Global refresh function (for Admin and manual triggers)
     siteRefreshFn = async () => {
@@ -269,7 +273,6 @@ export function SiteDataProvider({ children }) {
       newsSkip.current = 0
       newsDone.current = false
       await loadHome(true)
-      await loadSubs()
       try {
         if (syncChannel) syncChannel.postMessage({ type: 'REFRESH', at: Date.now() })
         localStorage.setItem('kk_last_sync_trigger', String(Date.now()))

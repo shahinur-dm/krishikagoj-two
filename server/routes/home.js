@@ -15,6 +15,7 @@ import BreakingNews from '../models/BreakingNews.js'
 import Opinion from '../models/Opinion.js'
 import LayoutTopic from '../models/LayoutTopic.js'
 import { HOME_LIST_SELECT } from '../utils/articleFields.js'
+import Media from '../models/Media.js'
 
 const router = Router()
 const CACHE_KEY = 'home:v46'
@@ -109,6 +110,29 @@ function slimArticle(a, imageW = 480) {
 
 function isOid(id) {
   return /^[0-9a-fA-F]{24}$/.test(String(id || '').trim())
+}
+
+function mediaIdFromUrl(url) {
+  return String(url || '').match(/\/api\/media\/([0-9a-fA-F]{24})/)?.[1] || null
+}
+
+async function publicImageMap(urls) {
+  if (!process.env.CLOUDINARY_CLOUD_NAME) return new Map()
+  const ids = [...new Set((urls || []).map(mediaIdFromUrl).filter(Boolean))]
+  if (!ids.length) return new Map()
+  const docs = await Media.find({ _id: { $in: ids } }).select('secureUrl url').lean()
+  const map = new Map()
+  docs.forEach((doc) => {
+    const direct = doc.secureUrl || doc.url || ''
+    if (/^https?:\/\//i.test(direct)) map.set(String(doc._id), direct)
+  })
+  return map
+}
+
+function applyPublicImage(url, map, width) {
+  const id = mediaIdFromUrl(url)
+  const direct = id ? map.get(id) : ''
+  return thumb(direct || url, width)
 }
 
 async function buildTopicGrid(settings) {
@@ -295,6 +319,7 @@ router.get('/', async (req, res) => {
       opinions,
       layoutTopics,
       ads,
+      subcategories,
     ] = await Promise.all([
       Category.find({ isActive: true }).select('name nameEn slug order').sort({ order: 1, name: 1 }).lean(),
       Article.find({ isPublished: true })
@@ -347,9 +372,32 @@ router.get('/', async (req, res) => {
           console.warn('ads query failed:', err.message)
           return []
         }),
+      Subcategory.find({ isActive: true })
+        .populate('category', 'name slug')
+        .select('nameBn nameEn slug category order isActive showOnHome homeOrder homeFeatured homeSecondary')
+        .sort({ order: 1, nameBn: 1 })
+        .lean(),
     ])
 
-    const slimArts = articles.map((a, i) => slimArticle(a, i === 0 ? 800 : 400))
+    const imageUrls = [
+      ...articles.map((a) => a.image),
+      ...photos.map((p) => p.photo),
+      ...opinions.map((o) => o.image),
+      ...staff.map((s) => s.image),
+    ]
+    const [cdnImages, topicGridEarly] = await Promise.all([
+      publicImageMap(imageUrls),
+      buildTopicGrid(settings).catch((err) => {
+        console.warn('topicGrid failed:', err.message)
+        return []
+      }),
+    ])
+
+    const slimArts = articles.map((a, i) => {
+      const row = slimArticle(a, i === 0 ? 800 : 400)
+      row.image = applyPublicImage(a.image, cdnImages, i === 0 ? 800 : 400)
+      return row
+    })
     const popular = [...slimArts]
       .sort((a, b) => (b.views || 0) - (a.views || 0) || (b.popular ? 1 : 0) - (a.popular ? 1 : 0))
       .slice(0, 12)
@@ -432,12 +480,7 @@ router.get('/', async (req, res) => {
       }
     }
 
-    let topicGrid = []
-    try {
-      topicGrid = await buildTopicGrid(settings)
-    } catch (err) {
-      console.warn('topicGrid failed:', err.message)
-    }
+    const topicGrid = topicGridEarly || []
 
     // Prefer bigthumbnail as lead if present
     let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
@@ -495,7 +538,7 @@ router.get('/', async (req, res) => {
       leadLayout,
       byCategory,
       topicGrid,
-      photos: photos.map((p) => ({ ...p, photo: thumb(p.photo, 400) })),
+      photos: photos.map((p) => ({ ...p, photo: applyPublicImage(p.photo, cdnImages, 400) })),
       videos: videos.map((v) => ({
         _id: v._id,
         title: v.title,
@@ -506,6 +549,7 @@ router.get('/', async (req, res) => {
       websites,
       staff,
       ads: isAdsGloballyEnabled(settings) ? (ads || []).filter((a) => isLive(a)).map(slimAd) : [],
+      subcategories,
       settings: slimSettings(settings),
       breakingNews: (breakingNews || []).map((b) => ({
         _id: b._id,
@@ -519,7 +563,7 @@ router.get('/', async (req, res) => {
         title: o.title,
         titleEn: o.titleEn || '',
         details: extractText(o.details || '', EXCERPT_LEN),
-        image: o.image || '',
+        image: applyPublicImage(o.image || '', cdnImages, 400),
         createdAt: o.createdAt,
       })),
       layoutTopics: (layoutTopics || []).map((t) => ({

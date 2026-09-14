@@ -163,24 +163,18 @@ export async function connectDb() {
 
     globalCache.promise = mongoose
       .connect(uri, {
-        maxPoolSize: 20,
-        minPoolSize: 1,
-        serverSelectionTimeoutMS: 8000,
+        maxPoolSize: 1,
+        minPoolSize: 0,
+        maxIdleTimeMS: 10000,
+        serverSelectionTimeoutMS: 5000,
         socketTimeoutMS: 20000,
         bufferCommands: false,
         autoIndex: false,
       })
-      .then(async (conn) => {
+      .then((conn) => {
         console.log('MongoDB connected:', conn.connection.name)
         globalCache.conn = conn
         lastDbError = null
-        try {
-          const Article = (await import('./models/Article.js')).default
-          const Media = (await import('./models/Media.js')).default
-          await Promise.all([Article.syncIndexes(), Media.syncIndexes()])
-        } catch (err) {
-          console.warn('Index sync skipped:', err.message)
-        }
         return conn
       })
       .catch((err) => {

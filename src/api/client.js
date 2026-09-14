@@ -92,7 +92,11 @@ export const api = {
         .filter(([, v]) => v !== undefined && v !== null && v !== '')
         .map(([k, v]) => [k, String(v)]),
     ).toString()
-    return request(`/home/news${qs ? `?${qs}` : ''}`)
+    return request(`/home/news${qs ? `?${qs}` : ''}`, {
+      cache: 'default',
+      skipAuth: true,
+      credentials: 'omit',
+    })
   },
 
   getCategories: () => request('/categories'),
