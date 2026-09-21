@@ -14,8 +14,8 @@ export default function LoginPage() {
   const { settings } = useSiteData()
   const navigate = useNavigate()
   const location = useLocation()
-  const [email, setEmail] = useState('superadmin@example.com')
-  const [password, setPassword] = useState('password')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [loginLogo, setLoginLogo] = useState('')
@@ -63,7 +63,7 @@ export default function LoginPage() {
         </div>
         <div className="login-box-body">
           {error && <div className="login-error">{error}</div>}
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} autoComplete="off">
             <div className="form-group">
               <label htmlFor="email">{t.emailOrUser || t.email}</label>
               <input
@@ -72,7 +72,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                autoComplete="username"
+                autoComplete="off"
               />
             </div>
             <div className="form-group">
@@ -83,7 +83,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                autoComplete="current-password"
+                autoComplete="new-password"
               />
             </div>
             <button type="submit" className="login-btn" disabled={submitting}>

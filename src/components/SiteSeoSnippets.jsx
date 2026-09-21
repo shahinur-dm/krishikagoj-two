@@ -40,15 +40,32 @@ export default function SiteSeoSnippets() {
       el.setAttribute('content', seo.metaKeyword)
     }
 
-    const favicon = settings.favicon || settings.logo || '/logo.png'
-    let icon = document.head.querySelector('link[rel="icon"]')
-    if (!icon) {
-      icon = document.createElement('link')
-      icon.setAttribute('rel', 'icon')
-      document.head.appendChild(icon)
-    }
-    icon.setAttribute('href', favicon)
+    const rawFavicon = String(settings.favicon || '').trim()
+    const rev = settings.faviconRev ? String(settings.faviconRev) : String(Date.now())
+    const favicon = `/api/settings/favicon?v=${encodeURIComponent(rev)}`
+    const type = rawFavicon.toLowerCase().includes('.svg')
+      ? 'image/svg+xml'
+      : rawFavicon.toLowerCase().includes('.ico')
+        ? 'image/x-icon'
+        : rawFavicon.toLowerCase().includes('.jpg') || rawFavicon.toLowerCase().includes('.jpeg')
+          ? 'image/jpeg'
+          : 'image/png'
 
+    document.head
+      .querySelectorAll('link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]')
+      .forEach((el) => el.remove())
+
+    ;[
+      ['icon', type],
+      ['shortcut icon', type],
+      ['apple-touch-icon', type],
+    ].forEach(([rel, mime]) => {
+      const link = document.createElement('link')
+      link.setAttribute('rel', rel)
+      link.setAttribute('href', favicon)
+      if (rel !== 'apple-touch-icon') link.setAttribute('type', mime)
+      document.head.appendChild(link)
+    })
     const ga = (seo.googleAnalytics || '').trim()
     if (ga && ga !== gaDone.current) {
       gaDone.current = ga

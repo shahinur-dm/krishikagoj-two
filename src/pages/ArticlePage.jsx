@@ -344,7 +344,7 @@ function ArticleLeftRail({ currentId }) {
 function ArticleBlock({ article, isFirst, onFontChange, fontSize = DEFAULT_FONT, ads }) {
   const { t, text, isEn } = useLang()
   const { settings } = useSiteData()
-  const url = getPublicShareUrl(article.path)
+  const url = getPublicShareUrl(article.path, isEn ? 'en' : 'bn')
   const gallery = article.raw?.images || []
   const title = text(article.title, article.titleEn)
   const shortHeadline = text(article.excerpt, article.excerptEn)?.trim()
@@ -651,10 +651,14 @@ export default function ArticlePage() {
     )
   }
 
-  const siteName = settings?.siteName || 'কৃষিকাগজ'
+  const siteName = isEn
+    ? (settings?.siteNameEn || 'Krishi Kagoj')
+    : (settings?.siteName || 'কৃষিকাগজ')
   const activeTitle = text(article.title, article.titleEn)
   const activeExcerpt = text(article.excerpt, article.excerptEn)
-  const desc = (article.metaDescription || activeExcerpt || '')
+  const desc = (isEn
+    ? (activeExcerpt || article.metaDescription || '')
+    : (article.metaDescription || activeExcerpt || ''))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160)
@@ -672,7 +676,7 @@ export default function ArticlePage() {
         image={article.image || settings?.seo?.ogImage || settings?.logo}
         type="article"
         siteName={siteName}
-        canonical={getPublicShareUrl(article.path)}
+        canonical={getPublicShareUrl(article.path, isEn ? 'en' : 'bn')}
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'NewsArticle',

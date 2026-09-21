@@ -167,10 +167,9 @@ function getCleanOgDescription(article, isEn = false) {
     .trim()
 
   const explicitDesc = (
-    (isEn && article.excerptEn ? article.excerptEn : '') ||
-    article.metaDescription ||
-    article.excerpt ||
-    ''
+    isEn
+      ? (article.excerptEn || '')
+      : (article.metaDescription || article.excerpt || '')
   ).replace(/\s+/g, ' ').trim()
 
   let desc = ''
@@ -266,8 +265,12 @@ export async function renderArticleOgHtml(req, res, idOrSlug) {
 
     const siteUrl = getProductionSiteUrl(req)
 
+    const requestUrl = [req.originalUrl, req.url, req.headers['x-vercel-original-url'], req.headers['x-invoke-path']]
+      .filter(Boolean)
+      .join(' ')
     const isEn =
       req.query.lang === 'en' ||
+      /[?&]lang=en(?:&|$)/.test(requestUrl) ||
       (req.headers.cookie && req.headers.cookie.includes('kk_lang=en'))
 
     const siteName = isEn ? 'Krishi Kagoj' : 'কৃষিকাগজ'
@@ -276,7 +279,9 @@ export async function renderArticleOgHtml(req, res, idOrSlug) {
 
     const desc = getCleanOgDescription(article, isEn)
     const cleanSlug = getCleanArticleSlug(article)
-    const canonicalUrl = `${siteUrl}/news/${cleanSlug}`
+    const canonicalUrl = isEn
+      ? `${siteUrl}/news/${cleanSlug}?lang=en`
+      : `${siteUrl}/news/${cleanSlug}`
 
     const { imgUrl, imageType } = await resolveShareImage(article.image, siteUrl)
     res.set('X-KK-OG-Image', String(imgUrl || '').slice(0, 200))
@@ -317,10 +322,11 @@ export async function renderArticleOgHtml(req, res, idOrSlug) {
 
     // Open Graph & Twitter meta tags to inject
     const logoUrl = `${siteUrl}/logo.png`
+    const faviconUrl = `${siteUrl}/api/settings/favicon`
     const dynamicTags = [
-      `<link rel="icon" type="image/png" href="${escapeAttr(logoUrl)}" />`,
-      `<link rel="shortcut icon" href="${escapeAttr(logoUrl)}" />`,
-      `<link rel="apple-touch-icon" href="${escapeAttr(logoUrl)}" />`,
+      `<link rel="icon" href="${escapeAttr(faviconUrl)}" />`,
+      `<link rel="shortcut icon" href="${escapeAttr(faviconUrl)}" />`,
+      `<link rel="apple-touch-icon" href="${escapeAttr(faviconUrl)}" />`,
       `<meta property="og:site_name" content="${escapeAttr(siteName)}" />`,
       `<meta property="og:logo" content="${escapeAttr(logoUrl)}" />`,
       `<meta property="og:type" content="article" />`,
@@ -342,10 +348,12 @@ export async function renderArticleOgHtml(req, res, idOrSlug) {
       article.publishedAt ? `<meta property="article:published_time" content="${new Date(article.publishedAt).toISOString()}" />` : '',
     ].filter(Boolean).join('\n    ')
 
-    html = html.replace(/<link\s+rel="icon"[^>]*>\s*/i, '')
+    html = html.replace(/<link\s+rel="(?:shortcut )?icon"[^>]*>\s*/gi, '')
+    html = html.replace(/<link\s+rel="apple-touch-icon"[^>]*>\s*/gi, '')
     html = html.replace('</head>', `    ${dynamicTags}\n  </head>`)
 
     res.set('Cache-Control', 'public, max-age=0, s-maxage=0, must-revalidate')
+    res.set('Vary', 'Cookie, Accept-Language')
     return res.status(200).type('html').send(html)
   } catch (err) {
     console.error('SSR OG Meta Error:', err)

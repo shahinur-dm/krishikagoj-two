@@ -1,10 +1,57 @@
 import { Router } from 'express'
 import SiteSetting from '../models/SiteSetting.js'
+import Media from '../models/Media.js'
 import { requireAuth, requirePermission, requireSuperAdmin } from '../middleware/auth.js'
 import { cacheGet, cacheSet, cacheDel } from '../utils/cache.js'
 import { generateArticle } from '../utils/aiGenerator.js'
 
 const router = Router()
+
+function faviconMime(url, fallback = 'image/png') {
+  const lower = String(url || '').toLowerCase()
+  if (lower.includes('.svg') || lower.includes('image/svg')) return 'image/svg+xml'
+  if (lower.includes('.ico')) return 'image/x-icon'
+  if (lower.includes('.jpg') || lower.includes('.jpeg')) return 'image/jpeg'
+  if (lower.includes('.webp')) return 'image/webp'
+  if (lower.includes('.gif')) return 'image/gif'
+  if (fallback && fallback.startsWith('image/')) return fallback
+  return 'image/png'
+}
+
+router.get('/favicon', async (_req, res) => {
+  try {
+    const settings = await SiteSetting.findOne({ key: 'site' }).select('favicon logo faviconRev').lean()
+    const raw = String(settings?.favicon || settings?.logo || '/logo.png').trim() || '/logo.png'
+    const rev = String(settings?.faviconRev || '')
+    res.set({
+      'Cache-Control': 'public, max-age=60, must-revalidate',
+      ETag: `"fav-${rev || '1'}"`,
+    })
+
+    const mediaId = raw.match(/\/api\/media\/([0-9a-fA-F]{24})/)?.[1] || (/^[0-9a-fA-F]{24}$/.test(raw) ? raw : null)
+    if (mediaId) {
+      const doc = await Media.findById(mediaId).select('mimeType data secureUrl url').lean()
+      if (doc?.secureUrl && /^https?:\/\//i.test(doc.secureUrl)) {
+        return res.redirect(302, doc.secureUrl)
+      }
+      if (doc?.url && /^https?:\/\//i.test(doc.url)) {
+        return res.redirect(302, doc.url)
+      }
+      if (doc?.data) {
+        const buffer = doc.data.buffer || doc.data
+        res.set('Content-Type', faviconMime(raw, doc.mimeType))
+        return res.send(Buffer.from(buffer))
+      }
+    }
+
+    if (/^https?:\/\//i.test(raw)) {
+      return res.redirect(302, raw)
+    }
+    return res.redirect(302, raw.startsWith('/') ? raw : `/${raw}`)
+  } catch (err) {
+    return res.redirect(302, '/logo.png')
+  }
+})
 
 router.get('/', async (_req, res) => {
   try {
@@ -213,6 +260,9 @@ router.put('/', requireAuth, requirePermission('setting', 'ads', 'breaking', 'po
     delete update.loginLogo
     delete update.aiWriter
     delete update.facebookPageAccessToken
+    if (Object.prototype.hasOwnProperty.call(update, 'favicon')) {
+      update.faviconRev = String(Date.now())
+    }
     const settings = await SiteSetting.findOneAndUpdate(
       { key: 'site' },
       { $set: update },

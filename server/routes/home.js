@@ -256,6 +256,7 @@ function slimSettings(s) {
         }
       : null,
     favicon: s.favicon || s.logo || '/logo.png',
+    faviconRev: s.faviconRev || '',
     adsEnabled: isAdsGloballyEnabled(s),
     ads_enabled: isAdsGloballyEnabled(s),
     topicGridLimit: Number(s.topicGridLimit) > 0 ? Number(s.topicGridLimit) : 8,
@@ -337,7 +338,7 @@ router.get('/', async (req, res) => {
         .lean(),
       SiteSetting.findOne({ key: 'site' })
         .select(
-          'siteName tagline hotline notice logo favicon email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
+          'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
         )
         .lean(),
       ImportantWebsite.find({ isActive: { $ne: false } })

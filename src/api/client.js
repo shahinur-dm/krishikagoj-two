@@ -307,15 +307,18 @@ export function articlePath(article) {
   return getArticlePath(article)
 }
 
-export function getPublicShareUrl(path = '') {
+export function getPublicShareUrl(path = '', lang) {
   const p = path.startsWith('/') ? path : `/${path}`
+  let origin = 'https://krishikagoj.com'
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
     if (host === 'localhost' || host === '127.0.0.1') {
-      return `${window.location.origin}${p}`
+      origin = window.location.origin
     }
   }
-  return `https://krishikagoj.com${p}`
+  const url = `${origin}${p}`
+  if (lang === 'en') return `${url}${url.includes('?') ? '&' : '?'}lang=en`
+  return url
 }
 
 export function getArticlePath(article) {
@@ -332,14 +335,21 @@ export function getArticlePath(article) {
   return `/news/${cleanKey || 'article'}`
 }
 
+const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯']
+
+function toBnDigits(value) {
+  return String(value).replace(/\d/g, (d) => BN_DIGITS[Number(d)])
+}
+
 export function formatBnDate(value, lang = 'bn') {
   if (!value) return ''
   try {
-    return new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'bn-BD', {
+    const formatted = new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'bn-BD', {
       day: 'numeric',
       month: 'long',
       year: 'numeric',
     }).format(new Date(value))
+    return lang === 'en' ? formatted : toBnDigits(formatted)
   } catch {
     return ''
   }
@@ -348,11 +358,12 @@ export function formatBnDate(value, lang = 'bn') {
 export function formatBnTime(value, lang = 'bn') {
   if (!value) return ''
   try {
-    return new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'bn-BD', {
+    const formatted = new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'bn-BD', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: lang === 'en',
     }).format(new Date(value))
+    return lang === 'en' ? formatted : toBnDigits(formatted)
   } catch {
     return ''
   }

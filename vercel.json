@@ -15,7 +15,8 @@
     }
   },
   "rewrites": [
-    { "source": "/favicon.ico", "destination": "/logo.png" },
+    { "source": "/favicon.ico", "destination": "/api/favicon" },
+    { "source": "/api/settings/favicon", "destination": "/api/favicon" },
     { "source": "/news/:slug*", "destination": "/api/ssr-news/:slug*" },
     { "source": "/api/articles/og/:slug*", "destination": "/api/ssr-news/:slug*" },
     { "source": "/api/(.*)", "destination": "/api" },
@@ -70,7 +71,7 @@
     {
       "source": "/favicon.ico",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400" }
+        { "key": "Cache-Control", "value": "public, max-age=60, must-revalidate" }
       ]
     },
     {
