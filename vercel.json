@@ -11,7 +11,7 @@
       "includeFiles": "dist/index.html"
     },
     "api/ssr-news/[...slug].js": {
-      "includeFiles": "{dist/index.html,server/generated-spa.html}"
+      "includeFiles": "dist/index.html"
     }
   },
   "rewrites": [
