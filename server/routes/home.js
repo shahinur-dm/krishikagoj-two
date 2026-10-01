@@ -21,10 +21,10 @@ const router = Router()
 const CACHE_KEY = 'home:v46'
 const CACHE_TTL = 15_000
 const NEWS_BATCH = 20
-const EXCERPT_LEN = 180
+const EXCERPT_LEN = 280
 
 const SLIM =
-  'title titleEn slug excerpt excerptEn image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
+  'title titleEn slug excerpt excerptEn metaDescription body bodyEn image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
 
 function extractText(htmlOrText, maxLen = 800) {
   if (!htmlOrText) return ''
@@ -41,16 +41,16 @@ function extractText(htmlOrText, maxLen = 800) {
   return clean.slice(0, maxLen)
 }
 
-function getFullDescription(excerpt, body, maxLen = EXCERPT_LEN) {
+function getFullDescription(excerpt, body, metaDesc, maxLen = EXCERPT_LEN) {
   const cleanExcerpt = extractText(excerpt, maxLen)
-  const cleanBody = extractText(body, maxLen)
+  const cleanBody = extractText(body || metaDesc, maxLen)
   if (!cleanExcerpt && !cleanBody) return ''
   if (!cleanBody) return cleanExcerpt
   if (!cleanExcerpt) return cleanBody
   if (cleanBody.startsWith(cleanExcerpt) || cleanBody.includes(cleanExcerpt)) {
     return cleanBody
   }
-  return `${cleanExcerpt} ${cleanBody}`.slice(0, maxLen)
+  return `${cleanExcerpt} — ${cleanBody}`.slice(0, maxLen)
 }
 
 function thumb(url, w = 480) {
@@ -76,8 +76,8 @@ function ytThumb(embed) {
 
 function slimArticle(a, imageW = 480) {
   if (!a) return a
-  const rawBn = getFullDescription(a.excerpt, a.body, EXCERPT_LEN)
-  const rawEn = getFullDescription(a.excerptEn, a.bodyEn, EXCERPT_LEN)
+  const rawBn = getFullDescription(a.excerpt, a.body, a.metaDescription, EXCERPT_LEN)
+  const rawEn = getFullDescription(a.excerptEn, a.bodyEn, a.metaDescription, EXCERPT_LEN)
   return {
     _id: a._id,
     title: a.title,
@@ -338,7 +338,7 @@ router.get('/', async (req, res) => {
         .lean(),
       SiteSetting.findOne({ key: 'site' })
         .select(
-          'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
+          'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig latestPopularConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
         )
         .lean(),
       ImportantWebsite.find({ isActive: { $ne: false } })
@@ -493,12 +493,22 @@ router.get('/', async (req, res) => {
     popular.forEach((a) => byId.set(String(a._id), a))
 
     const slots = settings?.homepageSlots || {}
+    const lpConfig = settings?.latestPopularConfig || {}
+    const lpLatestIds = (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
+      .map((id) => String(id || '').trim())
+      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+    const lpPopularIds = (Array.isArray(lpConfig.popularItems) ? lpConfig.popularItems : [])
+      .map((id) => String(id || '').trim())
+      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+
     const wantedIds = [
       slots.lead,
       ...(slots.grid || []),
       ...(slots.mid || []),
       slots.story,
       ...(slots.storyList || []),
+      ...lpLatestIds,
+      ...lpPopularIds,
     ]
       .map((id) => String(id || '').trim())
       .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
@@ -517,7 +527,14 @@ router.get('/', async (req, res) => {
       return key && byId.get(key) ? byId.get(key) : null
     }
 
-    const hasManualSlots = wantedIds.length > 0
+    const hasManualSlots = [
+      slots.lead,
+      ...(slots.grid || []),
+      ...(slots.mid || []),
+      slots.story,
+      ...(slots.storyList || []),
+    ].some((id) => /^[0-9a-fA-F]{24}$/.test(String(id || '').trim()))
+
     const leadLayout = hasManualSlots
       ? {
           lead: pickSlot(slots.lead),
@@ -528,12 +545,55 @@ router.get('/', async (req, res) => {
         }
       : null
 
+    let finalLatest = latest.length >= 12 ? latest : slimArts.slice(0, NEWS_BATCH)
+    if (lpConfig.latestMode === 'manual' && lpLatestIds.length > 0) {
+      const manualLatest = []
+      const usedId = new Set()
+      lpLatestIds.forEach((id) => {
+        const item = byId.get(id)
+        if (item && !usedId.has(id)) {
+          manualLatest.push(item)
+          usedId.add(id)
+        }
+      })
+      finalLatest.forEach((item) => {
+        const id = String(item._id)
+        if (!usedId.has(id)) {
+          manualLatest.push(item)
+          usedId.add(id)
+        }
+      })
+      finalLatest = manualLatest.slice(0, NEWS_BATCH)
+    }
+
+    let finalPopular = popular.length ? popular : slimArts.slice(0, 16)
+    if (lpConfig.popularMode === 'manual' && lpPopularIds.length > 0) {
+      const manualPop = []
+      const usedId = new Set()
+      lpPopularIds.forEach((id) => {
+        const item = byId.get(id)
+        if (item && !usedId.has(id)) {
+          manualPop.push(item)
+          usedId.add(id)
+        }
+      })
+      finalPopular.forEach((item) => {
+        const id = String(item._id)
+        if (!usedId.has(id)) {
+          manualPop.push(item)
+          usedId.add(id)
+        }
+      })
+      finalPopular = manualPop.slice(0, 16)
+    }
+
     const payload = {
       categories,
       headlines: headlines.length ? headlines : slimArts.slice(0, 16),
       featured: featuredOut.length ? featuredOut : slimArts.slice(0, 16),
-      latest: latest.length >= 12 ? latest : slimArts.slice(0, NEWS_BATCH),
-      popular: popular.length ? popular : slimArts.slice(0, 16),
+      latest: finalLatest,
+      popular: finalPopular,
+      latestPopularConfig: lpConfig,
       recent: slimArts.slice(0, NEWS_BATCH),
       hasMoreNews: slimArts.length === NEWS_BATCH,
       leadLayout,

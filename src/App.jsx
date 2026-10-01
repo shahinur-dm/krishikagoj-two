@@ -11,6 +11,7 @@ import ArticlePage from './pages/ArticlePage'
 import SearchPage from './pages/SearchPage'
 import VideosPage from './pages/VideosPage'
 import PhotosPage from './pages/PhotosPage'
+import EpaperPage from './pages/EpaperPage'
 import LoginPage from './pages/admin/LoginPage'
 import VisitorLoginPage from './pages/VisitorLoginPage'
 import './styles/global.css'
@@ -51,6 +52,7 @@ const SurveyAdminPage = lazy(() => import('./pages/admin/SurveyAdminPage'))
 const CmsPageAdminPage = lazy(() => import('./pages/admin/CmsPageAdminPage'))
 const SidebarSettingsPage = lazy(() => import('./pages/admin/SidebarSettingsPage'))
 const LayoutTopicPage = lazy(() => import('./pages/admin/LayoutTopicPage'))
+const LatestPopularAdminPage = lazy(() => import('./pages/admin/LatestPopularAdminPage'))
 const CmsPageView = lazy(() => import('./pages/CmsPageView'))
 const SurveyView = lazy(() => import('./pages/SurveyView'))
 
@@ -113,6 +115,7 @@ export default function App() {
             <Route path="home-lead" element={<HomeLeadPage />} />
             <Route path="sidebars" element={<SidebarSettingsPage />} />
             <Route path="layout-topics" element={<LayoutTopicPage />} />
+            <Route path="latest-popular" element={<LatestPopularAdminPage />} />
             <Route path="topic-grid" element={<TopicGridPage />} />
             <Route path="ai" element={<AiSettingsPage />} />
             <Route path="facebook-settings" element={<FacebookSettingsPage />} />
@@ -146,6 +149,7 @@ export default function App() {
             <Route path="search" element={<SearchPage />} />
             <Route path="category/:slug" element={<CategoryPage />} />
             <Route path="news/:id" element={<ArticlePage />} />
+            <Route path="epaper" element={<EpaperPage />} />
             <Route path="videos" element={<VideosPage />} />
             <Route path="photos" element={<PhotosPage />} />
             <Route path="page/:slug" element={<CmsPageView />} />

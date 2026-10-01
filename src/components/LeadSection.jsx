@@ -153,11 +153,17 @@ export default function LeadSection({
   const summaryOf = (item) => {
     if (!item) return ''
     const exc = text(item.excerpt, item.excerptEn)
-    if (exc && exc.trim().length > 50) return exc
-    const body = text(item.body, item.bodyEn)
+    const body = text(item.body || item.metaDescription, item.bodyEn || item.metaDescription)
+    let textStr = exc || ''
     if (body) {
       const plain = String(body).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-      if (plain) return plain.slice(0, 220) + (plain.length > 220 ? '...' : '')
+      if (plain && (!textStr || textStr.trim().length < 120)) {
+        textStr = textStr && !plain.startsWith(textStr) ? `${textStr} — ${plain}` : plain
+      }
+    }
+    if (textStr) {
+      const clean = textStr.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+      return clean.length > 320 ? clean.slice(0, 320) + '...' : clean
     }
     return exc || ''
   }

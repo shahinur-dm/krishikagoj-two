@@ -31,6 +31,15 @@ const siteSettingSchema = new mongoose.Schema(
     sectionSlots: { type: mongoose.Schema.Types.Mixed, default: {} },
     sectionSidebars: { type: mongoose.Schema.Types.Mixed, default: {} },
     discussedConfig: { type: mongoose.Schema.Types.Mixed, default: {} },
+    latestPopularConfig: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({
+        latestMode: 'auto',
+        popularMode: 'auto',
+        latestItems: [],
+        popularItems: [],
+      }),
+    },
     lazyBanner: { type: String, default: '' },
     facebookPage: { type: String, default: '' },
     facebookPageId: { type: String, default: '' },

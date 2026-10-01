@@ -926,6 +926,7 @@ router.post('/admin/:id/facebook-post', requireAuth, requirePermission('post', '
             caption: caption,
             access_token: accessToken,
           }),
+          signal: AbortSignal.timeout(15000),
         })
         fbData = await fbRes.json().catch(() => ({}))
         if (fbRes.ok && !fbData?.error && (fbData?.id || fbData?.post_id)) {
@@ -938,30 +939,38 @@ router.post('/admin/:id/facebook-post', requireAuth, requirePermission('post', '
 
     // Fallback to feed link post if photo post wasn't successful or no image
     if (!postedSuccess) {
-      const fbEndpoint = `https://graph.facebook.com/v19.0/${pageId}/feed`
-      fbRes = await fetch(fbEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: caption,
-          link: articleUrl,
-          access_token: accessToken,
-        }),
-      })
-      fbData = await fbRes.json().catch(() => ({}))
-      if (fbRes.ok && !fbData?.error && (fbData?.id || fbData?.post_id)) {
-        postedSuccess = true
+      try {
+        const fbEndpoint = `https://graph.facebook.com/v19.0/${pageId}/feed`
+        fbRes = await fetch(fbEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: caption,
+            link: articleUrl,
+            access_token: accessToken,
+          }),
+          signal: AbortSignal.timeout(15000),
+        })
+        fbData = await fbRes.json().catch(() => ({}))
+        if (fbRes.ok && !fbData?.error && (fbData?.id || fbData?.post_id)) {
+          postedSuccess = true
+        }
+      } catch (err) {
+        console.warn('Feed post request error:', err.message)
       }
     }
 
     if (!postedSuccess || fbData?.error) {
-      const errMsg = fbData?.error?.message || fbData?.error?.error_user_msg || 'Facebook API request failed'
+      const errMsg =
+        fbData?.error?.message ||
+        fbData?.error?.error_user_msg ||
+        (fbRes?.status ? `HTTP ${fbRes.status}` : 'Connection timed out or failed')
       await Article.findByIdAndUpdate(article._id, {
         facebookPostStatus: 'failed',
       })
       return res.status(400).json({
         message: `Facebook-এ পোস্ট করা যায়নি। Page connection/token/API configuration পরীক্ষা করুন। (${errMsg})`,
-        error: fbData?.error,
+        error: fbData?.error || { message: errMsg },
       })
     }
 

@@ -207,7 +207,7 @@ router.post('/facebook/test', requireAuth, requirePermission('setting'), async (
     }
 
     const fbUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(pageId)}?fields=id,name,link,is_published&access_token=${encodeURIComponent(accessToken)}`
-    const fbRes = await fetch(fbUrl)
+    const fbRes = await fetch(fbUrl, { signal: AbortSignal.timeout(12000) })
     const fbData = await fbRes.json().catch(() => ({}))
 
     if (!fbRes.ok || fbData.error) {

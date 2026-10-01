@@ -23,7 +23,7 @@ function CategoryLink({ cat, text, className, onClick, caret }) {
 
 export function SiteHeader() {
   const { categories, settings, subs } = useSiteData()
-  const { t, text, isEn } = useLang()
+  const { t, text, isEn, toggleLang } = useLang()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -238,28 +238,45 @@ export function SiteHeader() {
 
             <div className="main-links d-flex">
               <div className="nav-item d-none d-xl-block">
-                <span className="nav-link">
-                  <i className="fa-sharp fa-solid fa-table-list me-2" />
+                <Link to="/epaper" className="nav-link">
+                  <i className="fa-solid fa-table-list me-1" />
                   {t.todayPaper}
-                </span>
-              </div>
-              <div className="nav-item d-none d-xl-block">
-                <span className="nav-link">
-                  <i className="fa-regular fa-newspaper me-2" />
-                  {t.epaper}
-                </span>
+                </Link>
               </div>
               <div className="nav-item d-none d-lg-block">
-                <span className="nav-link">
-                  <i className="fa fa-book me-2" />
+                <Link to="/epaper" className="nav-link">
+                  <i className="fa-regular fa-newspaper me-1" />
+                  {t.epaper}
+                </Link>
+              </div>
+              <div className="nav-item d-none d-lg-block">
+                <Link to="/category/projukti" className="nav-link">
+                  <i className="fa-solid fa-book-open me-1" />
                   {t.magazine}
-                </span>
+                </Link>
+              </div>
+              <div className="nav-item d-none d-xxl-block">
+                <Link to="/search" className="nav-link">
+                  <i className="fa-solid fa-box-archive me-1" />
+                  {t.archive || 'আর্কাইভ'}
+                </Link>
               </div>
               <div className="nav-item d-none d-lg-block">
                 <a className="nav-link" href={social.facebook || '#'} target="_blank" rel="noreferrer">
-                  <i className="fa-solid fa-thumbs-up me-2" />
+                  <i className="fa-solid fa-thumbs-up me-1" />
                   {t.social}
                 </a>
+              </div>
+              <div className="nav-item d-none d-xxl-block">
+                <button
+                  type="button"
+                  className="nav-link border-0 bg-transparent"
+                  onClick={toggleLang}
+                  title={isEn ? 'বাংলায় দেখুন' : 'Switch to English'}
+                >
+                  <i className="fa-solid fa-repeat me-1" />
+                  {t.converter || 'বাংলা কনভার্টার'}
+                </button>
               </div>
               {user ? (
                 <div className="nav-item d-none d-md-block visitor-profile-nav" ref={userMenuRef}>

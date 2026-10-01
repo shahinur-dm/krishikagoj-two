@@ -2374,12 +2374,44 @@
 
 .post-list-page .pl-social {
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   background: #f59e0b;
   color: #111;
   font-weight: 700;
-  padding: 0.22rem 0.7rem;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.post-list-page .pl-social:hover:not(:disabled) {
+  background: #d97706;
+  color: #fff;
+}
+
+.post-list-page .pl-social:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.post-list-page .pl-social.is-loading {
+  background: #3b82f6;
+  color: #fff;
+  cursor: wait;
+}
+
+.post-list-page .pl-social.is-posted {
+  background: #059669;
+  color: #fff;
+}
+
+.post-list-page .pl-social.is-failed {
+  background: #ef4444;
+  color: #fff;
 }
 
 .post-list-page .pl-actions {

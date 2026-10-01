@@ -570,8 +570,38 @@ export default function PostsListPage() {
                     </span>
                   </td>
                   <td>
-                    <button type="button" className="pl-social" onClick={() => sharePost(item)}>
-                      Post
+                    <button
+                      type="button"
+                      className={`pl-social ${
+                        isPosting ? 'is-loading' : isPosted ? 'is-posted' : isFailed ? 'is-failed' : ''
+                      }`}
+                      disabled={isPosting}
+                      onClick={() => handleFacebookPost(item)}
+                      title={
+                        isPosting
+                          ? 'Posting to Facebook...'
+                          : isPosted
+                            ? 'Already posted on Facebook Page (Click to repost)'
+                            : isFailed
+                              ? 'Facebook post failed (Click to retry)'
+                              : 'Post to Facebook Page'
+                      }
+                    >
+                      {isPosting ? (
+                        <>
+                          <i className="fa-solid fa-spinner fa-spin" /> Posting…
+                        </>
+                      ) : isPosted ? (
+                        <>
+                          <i className="fa-solid fa-check" /> Posted
+                        </>
+                      ) : isFailed ? (
+                        <>
+                          <i className="fa-solid fa-rotate-right" /> Retry
+                        </>
+                      ) : (
+                        'Post'
+                      )}
                     </button>
                   </td>
                   <td className="pl-actions">
