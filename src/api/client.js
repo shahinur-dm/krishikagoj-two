@@ -33,7 +33,7 @@ async function request(path, options = {}) {
   if (token) headers.Authorization = `Bearer ${token}`
 
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 15000)
+  const timer = setTimeout(() => ctrl.abort(), 25000)
   try {
     const res = await fetch(`${API_URL}${path}`, {
       ...fetchOpts,

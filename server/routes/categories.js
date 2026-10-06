@@ -61,7 +61,7 @@ router.post('/', requireAuth, requirePermission('category'), async (req, res) =>
       isActive: body.isActive !== false && body.isActive !== 'false',
     })
     cacheDel('categories:')
-    cacheDel('home:')
+    cacheDel('home')
     res.status(201).json(category)
   } catch (err) {
     res.status(400).json({ message: categoryError(err) })
@@ -92,7 +92,7 @@ router.put('/:id', requireAuth, requirePermission('category'), async (req, res) 
     await category.save()
 
     cacheDel('categories:')
-    cacheDel('home:')
+    cacheDel('home')
     res.json(category)
   } catch (err) {
     res.status(400).json({ message: categoryError(err) })
@@ -116,7 +116,7 @@ router.delete('/:id', requireAuth, requirePermission('category'), async (req, re
 
     await Category.findByIdAndDelete(category._id)
     cacheDel('categories:')
-    cacheDel('home:')
+    cacheDel('home')
     res.json({ message: 'Category deleted', id: category._id })
   } catch (err) {
     res.status(500).json({ message: err.message })

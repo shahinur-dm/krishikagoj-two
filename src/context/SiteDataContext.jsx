@@ -70,7 +70,12 @@ function normalize(data) {
     settings: data.settings || null,
     categoryBlocks: categories.map((cat) => ({
       cat,
-      articles: (data.byCategory?.[cat.slug] || []).map(mapArticle),
+      articles: (
+        data.byCategory?.[cat.slug] ||
+        data.byCategory?.[cat._id] ||
+        data.byCategory?.[String(cat._id)] ||
+        []
+      ).map(mapArticle),
     })),
     topicGrid: (data.topicGrid || []).map((col) => ({
       ...col,
@@ -122,8 +127,15 @@ function mergeMoreNews(prev, incoming) {
       .map((cat) => ({
         cat,
         articles: uniqueAppend(
-          prev.categoryBlocks?.find((b) => b.cat?.slug === cat.slug)?.articles || [],
-          mapped.filter((a) => a.category === cat.slug),
+          prev.categoryBlocks?.find(
+            (b) => b.cat?.slug === cat.slug || String(b.cat?._id) === String(cat._id),
+          )?.articles || [],
+          mapped.filter(
+            (a) =>
+              a.category === cat.slug ||
+              String(a.categoryId) === String(cat._id) ||
+              a.raw?.category?.slug === cat.slug,
+          ),
         ),
       })),
   }

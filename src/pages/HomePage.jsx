@@ -148,7 +148,7 @@ export default function HomePage() {
     )
     observer.observe(el)
     return () => observer.disconnect()
-  }, [ready, showRest, hasMoreNews, loadMoreNews, categoryBlocks])
+  }, [ready, showRest, hasMoreNews, loadMoreNews])
 
   if (loading && !ready) {
     return (

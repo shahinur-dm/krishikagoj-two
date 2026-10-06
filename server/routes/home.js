@@ -278,11 +278,11 @@ router.get('/news', async (req, res) => {
   try {
     const skip = Math.max(0, Number(req.query.skip) || 0)
     const limit = Math.min(NEWS_BATCH, Math.max(1, Number(req.query.limit) || NEWS_BATCH))
-    const articles = await Article.find({ isPublished: true })
+    const articles = await Article.find({ isPublished: { $ne: false } })
       .select(SLIM)
       .populate('category', 'name nameEn slug')
       .populate('subcategory', 'nameBn nameEn slug')
-      .sort({ publishedAt: -1 })
+      .sort({ publishedAt: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean()
@@ -322,66 +322,101 @@ router.get('/', async (req, res) => {
       ads,
       subcategories,
     ] = await Promise.all([
-      Category.find({ isActive: true }).select('name nameEn slug order').sort({ order: 1, name: 1 }).lean(),
-      Article.find({ isPublished: true })
+      Category.find({ isActive: true })
+        .select('name nameEn slug order')
+        .sort({ order: 1, name: 1 })
+        .lean()
+        .catch(() => []),
+      Article.find({ isPublished: { $ne: false } })
         .select(HOME_LIST_SELECT)
         .populate('category', 'name nameEn slug')
         .populate('subcategory', 'nameBn nameEn slug')
-        .sort({ publishedAt: -1 })
+        .sort({ publishedAt: -1, createdAt: -1 })
         .limit(NEWS_BATCH)
-        .lean(),
-      PhotoGallery.find().select('title photo type').sort({ createdAt: -1 }).limit(12).lean(),
+        .lean()
+        .catch(() => []),
+      PhotoGallery.find().select('title photo type').sort({ createdAt: -1 }).limit(12).lean().catch(() => []),
       VideoGallery.find()
         .select('title embedCode thumbnail type')
         .sort({ createdAt: -1 })
         .limit(10)
-        .lean(),
+        .lean()
+        .catch(() => []),
       SiteSetting.findOne({ key: 'site' })
         .select(
           'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig latestPopularConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
         )
-        .lean(),
+        .lean()
+        .catch(() => null),
       ImportantWebsite.find({ isActive: { $ne: false } })
         .select('websiteName websiteLink order')
         .sort({ order: 1 })
         .limit(12)
-        .lean(),
+        .lean()
+        .catch(() => []),
       Staff.find({ isActive: { $ne: false }, type: { $in: ['Staff', 'Management'] } })
         .select('name designation image link type order')
         .sort({ order: 1 })
         .limit(8)
-        .lean(),
+        .lean()
+        .catch(() => []),
       BreakingNews.find({ isActive: { $ne: false }, status: 'published' })
         .select('titleBn titleEn order publishedAt')
         .sort({ order: 1, publishedAt: -1 })
         .limit(20)
-        .lean(),
+        .lean()
+        .catch(() => []),
       Opinion.find({ status: 'published', isActive: { $ne: false } })
         .select('name title titleEn details image createdAt')
         .sort({ createdAt: -1 })
         .limit(10)
-        .lean(),
+        .lean()
+        .catch(() => []),
       LayoutTopic.find({ isActive: { $ne: false } })
         .populate('category', 'name nameEn slug')
         .populate('subcategory', 'nameBn nameEn slug')
         .sort({ order: 1, createdAt: 1 })
-        .lean(),
+        .lean()
+        .catch(() => []),
       Ad.find({ isActive: { $ne: false } })
         .sort({ position: 1, order: 1, createdAt: -1 })
         .lean()
-        .catch((err) => {
-          console.warn('ads query failed:', err.message)
-          return []
-        }),
+        .catch(() => []),
       Subcategory.find({ isActive: true })
         .populate('category', 'name slug')
         .select('nameBn nameEn slug category order isActive showOnHome homeOrder homeFeatured homeSecondary')
         .sort({ order: 1, nameBn: 1 })
-        .lean(),
+        .lean()
+        .catch(() => []),
     ])
 
+    const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
+    const gridSlug = settings?.topicGridSlug || 'motso'
+
+    // Fetch latest published articles for every active content category in parallel
+    const categoryArticlesLists = await Promise.all(
+      contentCats.map((cat) =>
+        Article.find({
+          category: cat._id,
+          isPublished: { $ne: false },
+        })
+          .select(HOME_LIST_SELECT)
+          .populate('category', 'name nameEn slug')
+          .populate('subcategory', 'nameBn nameEn slug')
+          .sort({ publishedAt: -1, createdAt: -1 })
+          .limit(cat.slug === gridSlug ? 16 : 10)
+          .lean()
+          .catch((err) => {
+            console.warn(`Category news query failed for ${cat.slug}:`, err.message)
+            return []
+          }),
+      ),
+    )
+
+    const allCatRawArts = categoryArticlesLists.flat()
     const imageUrls = [
       ...articles.map((a) => a.image),
+      ...allCatRawArts.map((a) => a.image),
       ...photos.map((p) => p.photo),
       ...opinions.map((o) => o.image),
       ...staff.map((s) => s.image),
@@ -402,26 +437,50 @@ router.get('/', async (req, res) => {
     const popular = [...slimArts]
       .sort((a, b) => (b.views || 0) - (a.views || 0) || (b.popular ? 1 : 0) - (a.popular ? 1 : 0))
       .slice(0, 12)
-    const contentCats = categories.filter((c) => c.slug && c.slug !== 'home')
 
     const headlines = slimArts.filter((a) => a.headline).slice(0, 12)
     const featured = slimArts.filter((a) => a.featured).slice(0, 12)
     const latest = slimArts.filter((a) => a.latest).slice(0, 20)
     const bigThumb = slimArts.find((a) => a.bigthumbnail)
 
-    const gridSlug = settings?.topicGridSlug || 'motso'
+    // Build byCategory map for each category with proper articles and public CDN images
     const byCategory = {}
-    for (const cat of contentCats) byCategory[cat.slug] = []
-    for (const article of slimArts) {
-      const slug = article.category?.slug
-      const cap = slug === gridSlug ? 16 : 9
-      if (!slug || !byCategory[slug] || byCategory[slug].length >= cap) continue
-      byCategory[slug].push(article)
+    for (let i = 0; i < contentCats.length; i++) {
+      const cat = contentCats[i]
+      const rawList = categoryArticlesLists[i] || []
+      byCategory[cat.slug] = rawList.map((a) => {
+        const row = slimArticle(a, 400)
+        row.image = applyPublicImage(a.image, cdnImages, 400)
+        if (!row.category || !row.category.slug) {
+          row.category = {
+            _id: cat._id,
+            name: cat.name,
+            nameEn: cat.nameEn || '',
+            slug: cat.slug,
+          }
+        }
+        return row
+      })
     }
 
-    const sectionSlots = settings?.sectionSlots && typeof settings.sectionSlots === 'object'
-      ? settings.sectionSlots
-      : {}
+    // Merge in any recent slimArts that belong to category if not already in list
+    for (const article of slimArts) {
+      const slug = article.category?.slug
+      if (!slug || !byCategory[slug]) continue
+      const id = String(article._id)
+      if (!byCategory[slug].some((a) => String(a._id) === id)) {
+        byCategory[slug].unshift(article)
+        const cap = slug === gridSlug ? 16 : 10
+        if (byCategory[slug].length > cap) {
+          byCategory[slug] = byCategory[slug].slice(0, cap)
+        }
+      }
+    }
+
+    const sectionSlots =
+      settings?.sectionSlots && typeof settings.sectionSlots === 'object'
+        ? settings.sectionSlots
+        : {}
     const extraIds = []
     for (const slug of Object.keys(byCategory)) {
       const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
@@ -430,13 +489,23 @@ router.get('/', async (req, res) => {
       ids.forEach((id) => extraIds.push(id))
     }
     const known = new Map(slimArts.map((a) => [String(a._id), a]))
+    Object.values(byCategory)
+      .flat()
+      .forEach((a) => known.set(String(a._id), a))
+
     const need = [...new Set(extraIds)].filter((id) => !known.has(id))
     if (need.length) {
-      const extra = await Article.find({ _id: { $in: need }, isPublished: true })
+      const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
         .select(HOME_LIST_SELECT)
         .populate('category', 'name nameEn slug')
+        .populate('subcategory', 'nameBn nameEn slug')
         .lean()
-      extra.forEach((a) => known.set(String(a._id), slimArticle(a, 400)))
+        .catch(() => [])
+      extra.forEach((a) => {
+        const row = slimArticle(a, 400)
+        row.image = applyPublicImage(a.image, cdnImages, 400)
+        known.set(String(a._id), row)
+      })
     }
     for (const slug of Object.keys(byCategory)) {
       const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
@@ -457,28 +526,6 @@ router.get('/', async (req, res) => {
         if (!used.has(id)) next.push(item)
       })
       byCategory[slug] = next.slice(0, slug === gridSlug ? 16 : 12)
-    }
-
-    const safolloCat = contentCats.find((c) => c.slug === 'safollo')
-    if (safolloCat && (byCategory.safollo?.length || 0) < 7) {
-      const moreSafollo = await Article.find({
-        isPublished: true,
-        category: safolloCat._id,
-      })
-        .select(HOME_LIST_SELECT)
-        .populate('category', 'name nameEn slug')
-        .sort({ publishedAt: -1 })
-        .limit(7)
-        .lean()
-      const have = new Set((byCategory.safollo || []).map((a) => String(a._id)))
-      if (!byCategory.safollo) byCategory.safollo = []
-      for (const article of moreSafollo) {
-        if (byCategory.safollo.length >= 7) break
-        const id = String(article._id)
-        if (have.has(id)) continue
-        byCategory.safollo.push(slimArticle(article, 400))
-        have.add(id)
-      }
     }
 
     const topicGrid = topicGridEarly || []

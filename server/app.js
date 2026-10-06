@@ -163,7 +163,7 @@ export async function connectDb() {
 
     globalCache.promise = mongoose
       .connect(uri, {
-        maxPoolSize: 1,
+        maxPoolSize: 10,
         minPoolSize: 0,
         maxIdleTimeMS: 10000,
         serverSelectionTimeoutMS: 5000,

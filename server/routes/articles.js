@@ -134,7 +134,7 @@ router.get('/', async (req, res) => {
       exclude,
       excludeCategory,
     } = req.query
-    const filter = { isPublished: true }
+    const filter = { isPublished: { $ne: false } }
     const lim = Math.min(Number(limit) || 20, 100)
     const skipN = Math.max(0, Number(skip) || 0)
     const excludeIds = String(exclude || '')
