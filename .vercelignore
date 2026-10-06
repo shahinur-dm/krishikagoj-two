@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+.chrome_test_profile
+scratch
+.env.local
+.env.development
+dist
+.vscode
+.agents

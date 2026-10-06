@@ -155,11 +155,11 @@ export async function connectDb() {
 
     const opts = {
       bufferCommands: false,
-      maxPoolSize: 10,
+      maxPoolSize: 1,
       minPoolSize: 0,
-      maxIdleTimeMS: 60000,
+      maxIdleTimeMS: 30000,
       serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 20000,
+      socketTimeoutMS: 15000,
       connectTimeoutMS: 10000,
       heartbeatFrequencyMS: 10000,
       autoIndex: false,
