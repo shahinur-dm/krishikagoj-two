@@ -37,3 +37,6 @@ tmp-eb-style.css
 
 .vercel
 .env*
+scratch/
+.chrome_test_profile/
+
