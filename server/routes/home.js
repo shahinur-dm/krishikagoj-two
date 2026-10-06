@@ -112,42 +112,54 @@ function slimArticle(a, imageW = 480) {
   }
 }
 
-function isOid(id) {
-  return /^[0-9a-fA-F]{24}$/.test(String(id || '').trim())
-}
-
 function mediaIdFromUrl(url) {
   return String(url || '').match(/\/api\/media\/([0-9a-fA-F]{24})/)?.[1] || null
 }
+
+const mediaMapCache = new Map()
 
 async function publicImageMap(urls) {
   if (!process.env.CLOUDINARY_CLOUD_NAME) return new Map()
   const ids = [...new Set((urls || []).map(mediaIdFromUrl).filter(Boolean))]
   if (!ids.length) return new Map()
-  const docs = await Media.find({ _id: { $in: ids } }).select('secureUrl url').lean()
+
+  const missing = ids.filter((id) => !mediaMapCache.has(id))
+  if (missing.length) {
+    const docs = await Media.find({ _id: { $in: missing } }).select('secureUrl url').lean()
+    docs.forEach((doc) => {
+      const direct = doc.secureUrl || doc.url || ''
+      if (/^https?:\/\//i.test(direct)) mediaMapCache.set(String(doc._id), direct)
+    })
+  }
+
   const map = new Map()
-  docs.forEach((doc) => {
-    const direct = doc.secureUrl || doc.url || ''
-    if (/^https?:\/\//i.test(direct)) map.set(String(doc._id), direct)
+  ids.forEach((id) => {
+    if (mediaMapCache.has(id)) map.set(id, mediaMapCache.get(id))
   })
   return map
 }
 
 function applyPublicImage(url, map, width) {
   const id = mediaIdFromUrl(url)
-  const direct = id ? map.get(id) : ''
+  const direct = id ? (map.get(id) || mediaMapCache.get(id)) : ''
   return thumb(direct || url, width)
 }
 
-async function buildTopicGrid(settings) {
+function isOid(id) {
+  return /^[0-9a-fA-F]{24}$/.test(String(id || '').trim())
+}
+
+async function buildTopicGrid(settings, allSubcategories = []) {
   const limit = Math.min(16, Math.max(1, Number(settings?.topicGridLimit) || 8))
-  const topics = await Subcategory.find({ isActive: { $ne: false }, showOnHome: true })
+  const topics = (allSubcategories.length ? allSubcategories : await Subcategory.find({ isActive: { $ne: false }, showOnHome: true })
     .populate('category', 'name slug')
     .select('nameBn nameEn slug category homeFeatured homeSecondary homeOrder order')
     .sort({ homeOrder: 1, order: 1, nameBn: 1 })
     .limit(limit)
     .lean()
-    .catch(() => [])
+    .catch(() => []))
+    .filter((s) => s.showOnHome)
+    .slice(0, limit)
 
   if (!topics.length) return []
 
@@ -453,7 +465,7 @@ async function buildHomePayload() {
   ]
   const [cdnImages, topicGridEarly] = await Promise.all([
     publicImageMap(imageUrls),
-    buildTopicGrid(settings).catch((err) => {
+    buildTopicGrid(settings, subcategories).catch((err) => {
       console.warn('topicGrid failed:', err.message)
       return []
     }),
