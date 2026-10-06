@@ -149,68 +149,36 @@ function isOid(id) {
   return /^[0-9a-fA-F]{24}$/.test(String(id || '').trim())
 }
 
-async function buildTopicGrid(settings, allSubcategories = []) {
+function buildTopicGrid(settings, allSubcategories = [], allArticles = [], cdnImages = new Map()) {
   const limit = Math.min(16, Math.max(1, Number(settings?.topicGridLimit) || 8))
-  const topics = (allSubcategories.length ? allSubcategories : await Subcategory.find({ isActive: { $ne: false }, showOnHome: true })
-    .populate('category', 'name slug')
-    .select('nameBn nameEn slug category homeFeatured homeSecondary homeOrder order')
-    .sort({ homeOrder: 1, order: 1, nameBn: 1 })
-    .limit(limit)
-    .lean()
-    .catch(() => []))
+  const topics = (allSubcategories || [])
     .filter((s) => s.showOnHome)
     .slice(0, limit)
 
   if (!topics.length) return []
 
-  const topicIds = topics.map((t) => t._id)
-  const rawPosts = await Article.find({
-    subcategory: { $in: topicIds },
-    isPublished: { $ne: false },
-  })
-    .select('title titleEn slug excerpt excerptEn metaDescription image views publishedAt subcategory')
-    .sort({ publishedAt: -1 })
-    .limit(limit * 6)
-    .lean()
-    .catch(() => [])
-
-  const subMap = new Map(topics.map((t) => [String(t._id), t]))
+  const topicIds = new Set(topics.map((t) => String(t._id)))
+  const articleById = new Map(allArticles.map((a) => [String(a._id), a]))
   const grouped = new Map()
   topics.forEach((t) => grouped.set(String(t._id), []))
 
-  for (const post of rawPosts) {
-    const key = String(post.subcategory?._id || post.subcategory)
-    const list = grouped.get(key)
-    if (list && list.length < 6) {
-      list.push(post)
+  for (const post of allArticles) {
+    const key = String(post.subcategory?._id || post.subcategory || '')
+    if (topicIds.has(key)) {
+      const list = grouped.get(key)
+      if (list && list.length < 6) {
+        list.push(post)
+      }
     }
   }
-
-  const extraIds = []
-  topics.forEach((t) => {
-    if (isOid(t.homeFeatured)) extraIds.push(String(t.homeFeatured))
-    if (isOid(t.homeSecondary)) extraIds.push(String(t.homeSecondary))
-  })
-  const extraDocs = extraIds.length
-    ? await Article.find({ _id: { $in: extraIds }, isPublished: { $ne: false } })
-        .select('title titleEn slug excerpt excerptEn metaDescription image views publishedAt subcategory')
-        .lean()
-        .catch(() => [])
-    : []
-  const extraById = new Map(extraDocs.map((d) => [String(d._id), d]))
 
   return topics
     .map((topic) => {
       const posts = grouped.get(String(topic._id)) || []
       const byId = new Map(posts.map((p) => [String(p._id), p]))
-      extraDocs.forEach((d) => {
-        if (String(d.subcategory?._id || d.subcategory) === String(topic._id)) {
-          byId.set(String(d._id), d)
-        }
-      })
 
-      let feat = isOid(topic.homeFeatured) ? extraById.get(String(topic.homeFeatured)) || byId.get(String(topic.homeFeatured)) : null
-      let sec = isOid(topic.homeSecondary) ? extraById.get(String(topic.homeSecondary)) || byId.get(String(topic.homeSecondary)) : null
+      let feat = isOid(topic.homeFeatured) ? articleById.get(String(topic.homeFeatured)) || byId.get(String(topic.homeFeatured)) : null
+      let sec = isOid(topic.homeSecondary) ? articleById.get(String(topic.homeSecondary)) || byId.get(String(topic.homeSecondary)) : null
 
       const pool = posts.filter((p) => {
         const id = String(p._id)
@@ -232,7 +200,7 @@ async function buildTopicGrid(settings, allSubcategories = []) {
               titleEn: a.titleEn || '',
               slug: a.slug,
               excerpt: getFullDescription(a.excerpt, a.body, a.metaDescription, 160),
-              image: thumb(a.image, 400),
+              image: applyPublicImage(a.image, cdnImages, 400),
               views: a.views || 0,
               publishedAt: a.publishedAt,
             }
@@ -371,9 +339,9 @@ async function buildHomePayload() {
       .lean()
       .catch(() => []),
     Article.find({ isPublished: { $ne: false } })
-      .select(HOME_LIST_SELECT)
+      .select(CATEGORY_CARD_SELECT)
       .sort({ publishedAt: -1 })
-      .limit(NEWS_BATCH)
+      .limit(350)
       .lean()
       .catch(() => []),
     PhotoGallery.find().select('title photo type').sort({ createdAt: -1 }).limit(12).lean().catch(() => []),
@@ -431,52 +399,21 @@ async function buildHomePayload() {
       .catch(() => []),
   ])
 
+  const allArticles = articles || []
   const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
   const gridSlug = settings?.topicGridSlug || 'motso'
   const catMap = new Map((categories || []).map((c) => [String(c._id), c]))
   const subMap = new Map((subcategories || []).map((s) => [String(s._id), s]))
 
-  // Fetch latest published articles for every active content category in small batches (lean, indexed)
-  const chunkSize = 6
-  const categoryArticlesLists = []
-  for (let i = 0; i < contentCats.length; i += chunkSize) {
-    const chunk = contentCats.slice(i, i + chunkSize)
-    const chunkResults = await Promise.all(
-      chunk.map((cat) =>
-        Article.find({
-          category: cat._id,
-          isPublished: { $ne: false },
-        })
-          .select(CATEGORY_CARD_SELECT)
-          .sort({ publishedAt: -1 })
-          .limit(cat.slug === gridSlug ? 16 : 10)
-          .lean()
-          .catch((err) => {
-            console.warn(`Category news query failed for ${cat.slug}:`, err.message)
-            return []
-          }),
-      ),
-    )
-    categoryArticlesLists.push(...chunkResults)
-  }
-
-  const allCatRawArts = categoryArticlesLists.flat()
   const imageUrls = [
-    ...articles.map((a) => a.image),
-    ...allCatRawArts.map((a) => a.image),
+    ...allArticles.map((a) => a.image),
     ...photos.map((p) => p.photo),
     ...opinions.map((o) => o.image),
     ...staff.map((s) => s.image),
   ]
-  const [cdnImages, topicGridEarly] = await Promise.all([
-    publicImageMap(imageUrls),
-    buildTopicGrid(settings, subcategories).catch((err) => {
-      console.warn('topicGrid failed:', err.message)
-      return []
-    }),
-  ])
+  const cdnImages = await publicImageMap(imageUrls)
 
-  const slimArts = articles.map((a, i) => {
+  const slimArts = allArticles.slice(0, NEWS_BATCH).map((a, i) => {
     const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
     const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
     const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, i === 0 ? 800 : 400)
@@ -492,12 +429,15 @@ async function buildHomePayload() {
   const latest = slimArts.filter((a) => a.latest).slice(0, 20)
   const bigThumb = slimArts.find((a) => a.bigthumbnail)
 
-  // Build byCategory map for each category with proper articles and public CDN images
+  // Build byCategory purely in memory from allArticles
   const byCategory = {}
-  for (let i = 0; i < contentCats.length; i++) {
-    const cat = contentCats[i]
-    const rawList = categoryArticlesLists[i] || []
-    byCategory[cat.slug] = rawList.map((a) => {
+  for (const cat of contentCats) {
+    const catIdStr = String(cat._id)
+    const matched = allArticles.filter((a) => {
+      const aCatId = String(a.category?._id || a.category || '')
+      return aCatId === catIdStr
+    })
+    byCategory[cat.slug] = matched.slice(0, cat.slug === gridSlug ? 16 : 10).map((a) => {
       const sub = a.subcategory ? subMap.get(String(a.subcategory._id || a.subcategory)) : null
       const row = slimArticle(
         {
@@ -550,7 +490,7 @@ async function buildHomePayload() {
   const need = [...new Set(extraIds)].filter((id) => !known.has(id))
   if (need.length) {
     const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
-      .select(HOME_LIST_SELECT)
+      .select(CATEGORY_CARD_SELECT)
       .lean()
       .catch(() => [])
     extra.forEach((a) => {
@@ -582,7 +522,7 @@ async function buildHomePayload() {
     byCategory[slug] = next.slice(0, slug === gridSlug ? 16 : 12)
   }
 
-  const topicGrid = topicGridEarly || []
+  const topicGrid = buildTopicGrid(settings, subcategories, allArticles, cdnImages)
 
   // Prefer bigthumbnail as lead if present
   let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
