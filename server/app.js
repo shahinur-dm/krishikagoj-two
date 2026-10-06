@@ -121,10 +121,10 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ message: err.message || 'Server error' })
 })
 
-const globalCache = globalThis.__kkMongo || { conn: null, promise: null }
-globalThis.__kkMongo = globalCache
-
-let lastDbError = null
+let cached = globalThis.__kkMongoose
+if (!cached) {
+  cached = globalThis.__kkMongoose = { conn: null, promise: null }
+}
 
 function formatMongoUri(raw) {
   if (!raw) return ''
@@ -142,51 +142,50 @@ function formatMongoUri(raw) {
 }
 
 export async function connectDb() {
-  const state = mongoose.connection.readyState
-  if (state === 1) {
-    globalCache.conn = mongoose
-    lastDbError = null
-    return mongoose
+  if (cached.conn && mongoose.connection.readyState === 1) {
+    return cached.conn
   }
 
-  if (state === 0 || state === 3) {
-    globalCache.conn = null
-    globalCache.promise = null
-  }
-
-  if (!globalCache.promise) {
+  if (!cached.promise) {
     const rawUri = process.env.MONGODB_URI
     if (!rawUri) {
-      lastDbError = 'MONGODB_URI environment variable is missing'
-      throw new Error(lastDbError)
+      throw new Error('MONGODB_URI environment variable is missing')
     }
     const uri = formatMongoUri(rawUri)
 
-    globalCache.promise = mongoose
-      .connect(uri, {
-        maxPoolSize: 1,
-        minPoolSize: 0,
-        maxIdleTimeMS: 60000,
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 20000,
-        connectTimeoutMS: 5000,
-        heartbeatFrequencyMS: 10000,
-        autoIndex: false,
-      })
-      .then((conn) => {
-        globalCache.conn = conn
-        lastDbError = null
-        return conn
+    const opts = {
+      bufferCommands: false,
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      maxIdleTimeMS: 60000,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 20000,
+      connectTimeoutMS: 10000,
+      heartbeatFrequencyMS: 10000,
+      autoIndex: false,
+    }
+
+    cached.promise = mongoose
+      .connect(uri, opts)
+      .then((mongooseInstance) => {
+        cached.conn = mongooseInstance
+        return mongooseInstance
       })
       .catch((err) => {
-        globalCache.promise = null
-        globalCache.conn = null
-        lastDbError = err.message
+        cached.promise = null
+        cached.conn = null
         throw err
       })
   }
 
-  return globalCache.promise
+  try {
+    cached.conn = await cached.promise
+  } catch (err) {
+    cached.promise = null
+    throw err
+  }
+
+  return cached.conn
 }
 
 export default app
