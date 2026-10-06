@@ -4,7 +4,7 @@ export const ARTICLE_LIST_SELECT =
 
 /** Homepage cards only — include body/metaDescription for rich summary */
 export const HOME_LIST_SELECT =
-  'title titleEn slug excerpt excerptEn metaDescription body bodyEn image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
+  'title titleEn slug excerpt excerptEn metaDescription image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
 
 /** Full fields for public article page + admin edit form */
 export const ARTICLE_DETAIL_SELECT =

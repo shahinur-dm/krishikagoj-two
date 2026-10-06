@@ -164,7 +164,7 @@ export async function connectDb() {
 
     globalCache.promise = mongoose
       .connect(uri, {
-        maxPoolSize: 10,
+        maxPoolSize: 3,
         minPoolSize: 0,
         maxIdleTimeMS: 60000,
         serverSelectionTimeoutMS: 5000,

@@ -372,9 +372,7 @@ async function buildHomePayload() {
       .catch(() => []),
     Article.find({ isPublished: { $ne: false } })
       .select(HOME_LIST_SELECT)
-      .populate('category', 'name nameEn slug')
-      .populate('subcategory', 'nameBn nameEn slug')
-      .sort({ publishedAt: -1, createdAt: -1 })
+      .sort({ publishedAt: -1 })
       .limit(NEWS_BATCH)
       .lean()
       .catch(() => []),
@@ -435,25 +433,32 @@ async function buildHomePayload() {
 
   const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
   const gridSlug = settings?.topicGridSlug || 'motso'
+  const catMap = new Map((categories || []).map((c) => [String(c._id), c]))
   const subMap = new Map((subcategories || []).map((s) => [String(s._id), s]))
 
-  // Fetch latest published articles for every active content category in parallel (lean, indexed)
-  const categoryArticlesLists = await Promise.all(
-    contentCats.map((cat) =>
-      Article.find({
-        category: cat._id,
-        isPublished: { $ne: false },
-      })
-        .select(CATEGORY_CARD_SELECT)
-        .sort({ publishedAt: -1 })
-        .limit(cat.slug === gridSlug ? 16 : 10)
-        .lean()
-        .catch((err) => {
-          console.warn(`Category news query failed for ${cat.slug}:`, err.message)
-          return []
-        }),
-    ),
-  )
+  // Fetch latest published articles for every active content category in small batches (lean, indexed)
+  const chunkSize = 6
+  const categoryArticlesLists = []
+  for (let i = 0; i < contentCats.length; i += chunkSize) {
+    const chunk = contentCats.slice(i, i + chunkSize)
+    const chunkResults = await Promise.all(
+      chunk.map((cat) =>
+        Article.find({
+          category: cat._id,
+          isPublished: { $ne: false },
+        })
+          .select(CATEGORY_CARD_SELECT)
+          .sort({ publishedAt: -1 })
+          .limit(cat.slug === gridSlug ? 16 : 10)
+          .lean()
+          .catch((err) => {
+            console.warn(`Category news query failed for ${cat.slug}:`, err.message)
+            return []
+          }),
+      ),
+    )
+    categoryArticlesLists.push(...chunkResults)
+  }
 
   const allCatRawArts = categoryArticlesLists.flat()
   const imageUrls = [
@@ -472,7 +477,9 @@ async function buildHomePayload() {
   ])
 
   const slimArts = articles.map((a, i) => {
-    const row = slimArticle(a, i === 0 ? 800 : 400)
+    const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
+    const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
+    const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, i === 0 ? 800 : 400)
     row.image = applyPublicImage(a.image, cdnImages, i === 0 ? 800 : 400)
     return row
   })
@@ -544,12 +551,12 @@ async function buildHomePayload() {
   if (need.length) {
     const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
       .select(HOME_LIST_SELECT)
-      .populate('category', 'name nameEn slug')
-      .populate('subcategory', 'nameBn nameEn slug')
       .lean()
       .catch(() => [])
     extra.forEach((a) => {
-      const row = slimArticle(a, 400)
+      const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
+      const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
+      const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, 400)
       row.image = applyPublicImage(a.image, cdnImages, 400)
       known.set(String(a._id), row)
     })
