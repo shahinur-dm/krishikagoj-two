@@ -18,13 +18,15 @@ import { HOME_LIST_SELECT } from '../utils/articleFields.js'
 import Media from '../models/Media.js'
 
 const router = Router()
-const CACHE_KEY = 'home:v46'
-const CACHE_TTL = 15_000
+const CACHE_KEY = 'home:v48'
+const CACHE_TTL = 180_000
 const NEWS_BATCH = 20
 const EXCERPT_LEN = 280
 
 const SLIM =
-  'title titleEn slug excerpt excerptEn metaDescription body bodyEn image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
+  'title titleEn slug excerpt excerptEn metaDescription image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
+const CATEGORY_CARD_SELECT =
+  'title titleEn slug excerpt excerptEn metaDescription image author views featured headline latest popular bigthumbnail publishedAt category subcategory'
 
 function extractText(htmlOrText, maxLen = 800) {
   if (!htmlOrText) return ''
@@ -271,7 +273,7 @@ function setHomeCacheHeaders(res, bust) {
     res.set('Surrogate-Control', 'no-store')
     return
   }
-  res.set('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=120')
+  res.set('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300')
 }
 
 router.get('/news', async (req, res) => {
@@ -401,8 +403,8 @@ router.get('/', async (req, res) => {
           category: cat._id,
           isPublished: { $ne: false },
         })
-          .select(HOME_LIST_SELECT)
-          .sort({ publishedAt: -1, createdAt: -1 })
+          .select(CATEGORY_CARD_SELECT)
+          .sort({ publishedAt: -1 })
           .limit(cat.slug === gridSlug ? 16 : 10)
           .lean()
           .catch((err) => {

@@ -41,8 +41,9 @@ async function handler(req, res) {
   }
 
   const incoming = incomingPath(req)
-  const newsSlug = newsSlugFromPath(incoming) || extractNewsSlug(req)
-  if ((req.method === 'GET' || req.method === 'HEAD') && newsSlug && !String(req.url || '').includes('/api/home/')) {
+  const isApi = req.url && req.url.startsWith('/api')
+  const newsSlug = !isApi ? (newsSlugFromPath(incoming) || extractNewsSlug(req)) : ''
+  if ((req.method === 'GET' || req.method === 'HEAD') && newsSlug && !isApi) {
     return renderArticleOgHtml(req, res, newsSlug)
   }
 

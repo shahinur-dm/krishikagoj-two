@@ -44,9 +44,10 @@ function extractNewsSsrSlug(req) {
 }
 
 app.use(async (req, res, next) => {
-  const targetSlug = extractNewsSsrSlug(req) || extractNewsSlug(req)
+  const isApi = req.url && req.url.startsWith('/api')
+  const targetSlug = !isApi ? (extractNewsSsrSlug(req) || extractNewsSlug(req)) : ''
 
-  if ((req.method === 'GET' || req.method === 'HEAD') && targetSlug && !String(req.url || '').includes('/api/home/')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && targetSlug && !isApi) {
     try {
       await connectDb()
       return await renderArticleOgHtml(req, res, targetSlug)
@@ -165,14 +166,15 @@ export async function connectDb() {
       .connect(uri, {
         maxPoolSize: 10,
         minPoolSize: 0,
-        maxIdleTimeMS: 10000,
+        maxIdleTimeMS: 60000,
         serverSelectionTimeoutMS: 5000,
         socketTimeoutMS: 20000,
+        connectTimeoutMS: 10000,
+        heartbeatFrequencyMS: 10000,
         bufferCommands: false,
         autoIndex: false,
       })
       .then((conn) => {
-        console.log('MongoDB connected:', conn.connection.name)
         globalCache.conn = conn
         lastDbError = null
         return conn
