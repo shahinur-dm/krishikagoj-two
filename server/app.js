@@ -171,7 +171,6 @@ export async function connectDb() {
         socketTimeoutMS: 20000,
         connectTimeoutMS: 10000,
         heartbeatFrequencyMS: 10000,
-        bufferCommands: false,
         autoIndex: false,
       })
       .then((conn) => {

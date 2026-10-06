@@ -125,7 +125,7 @@ async function publicImageMap(urls) {
 
   const missing = ids.filter((id) => !mediaMapCache.has(id))
   if (missing.length) {
-    const docs = await Media.find({ _id: { $in: missing } }).select('secureUrl url').lean()
+    const docs = await Media.find({ _id: { $in: missing } }).select('secureUrl url').lean().catch(() => [])
     docs.forEach((doc) => {
       const direct = doc.secureUrl || doc.url || ''
       if (/^https?:\/\//i.test(direct)) mediaMapCache.set(String(doc._id), direct)
@@ -382,8 +382,7 @@ async function buildHomePayload() {
       .lean()
       .catch(() => []),
     LayoutTopic.find({ isActive: { $ne: false } })
-      .populate('category', 'name nameEn slug')
-      .populate('subcategory', 'nameBn nameEn slug')
+      .select('title titleEn slug icon image url category subcategory order isActive')
       .sort({ order: 1, createdAt: 1 })
       .lean()
       .catch(() => []),
@@ -392,7 +391,6 @@ async function buildHomePayload() {
       .lean()
       .catch(() => []),
     Subcategory.find({ isActive: true })
-      .populate('category', 'name slug')
       .select('nameBn nameEn slug category order isActive showOnHome homeOrder homeFeatured homeSecondary')
       .sort({ order: 1, nameBn: 1 })
       .lean()
