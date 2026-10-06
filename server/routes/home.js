@@ -18,7 +18,7 @@ import { HOME_LIST_SELECT } from '../utils/articleFields.js'
 import Media from '../models/Media.js'
 
 const router = Router()
-const CACHE_KEY = 'home:v48'
+const CACHE_KEY = 'home:v49'
 const CACHE_TTL = 180_000
 const NEWS_BATCH = 20
 const EXCERPT_LEN = 280
