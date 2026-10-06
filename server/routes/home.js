@@ -392,8 +392,9 @@ router.get('/', async (req, res) => {
 
     const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
     const gridSlug = settings?.topicGridSlug || 'motso'
+    const subMap = new Map((subcategories || []).map((s) => [String(s._id), s]))
 
-    // Fetch latest published articles for every active content category in parallel
+    // Fetch latest published articles for every active content category in parallel (lean, indexed)
     const categoryArticlesLists = await Promise.all(
       contentCats.map((cat) =>
         Article.find({
@@ -401,8 +402,6 @@ router.get('/', async (req, res) => {
           isPublished: { $ne: false },
         })
           .select(HOME_LIST_SELECT)
-          .populate('category', 'name nameEn slug')
-          .populate('subcategory', 'nameBn nameEn slug')
           .sort({ publishedAt: -1, createdAt: -1 })
           .limit(cat.slug === gridSlug ? 16 : 10)
           .lean()
@@ -449,16 +448,21 @@ router.get('/', async (req, res) => {
       const cat = contentCats[i]
       const rawList = categoryArticlesLists[i] || []
       byCategory[cat.slug] = rawList.map((a) => {
-        const row = slimArticle(a, 400)
+        const sub = a.subcategory ? subMap.get(String(a.subcategory._id || a.subcategory)) : null
+        const row = slimArticle(
+          {
+            ...a,
+            category: {
+              _id: cat._id,
+              name: cat.name,
+              nameEn: cat.nameEn || '',
+              slug: cat.slug,
+            },
+            subcategory: sub || a.subcategory,
+          },
+          400,
+        )
         row.image = applyPublicImage(a.image, cdnImages, 400)
-        if (!row.category || !row.category.slug) {
-          row.category = {
-            _id: cat._id,
-            name: cat.name,
-            nameEn: cat.nameEn || '',
-            slug: cat.slug,
-          }
-        }
         return row
       })
     }

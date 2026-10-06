@@ -5,13 +5,19 @@
   "outputDirectory": "dist",
   "functions": {
     "api/index.js": {
-      "includeFiles": "dist/index.html"
+      "includeFiles": "dist/index.html",
+      "maxDuration": 60,
+      "memory": 1024
     },
     "api/[...path].js": {
-      "includeFiles": "dist/index.html"
+      "includeFiles": "dist/index.html",
+      "maxDuration": 60,
+      "memory": 1024
     },
     "api/ssr-news/[...slug].js": {
-      "includeFiles": "dist/index.html"
+      "includeFiles": "dist/index.html",
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "rewrites": [
@@ -35,7 +41,7 @@
     {
       "source": "/api/home",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=15, s-maxage=30, stale-while-revalidate=120" }
+        { "key": "Cache-Control", "value": "public, max-age=15, s-maxage=60, stale-while-revalidate=300" }
       ]
     },
     {
@@ -57,7 +63,7 @@
       ]
     },
     {
-      "source": "/((?!assets/|api/media/|.*\\.(?:png|jpg|jpeg|svg|webp|ico|woff2?|ttf|eot)).*)",
+      "source": "/((?!assets/|api/|.*\\.(?:png|jpg|jpeg|svg|webp|ico|woff2?|ttf|eot)).*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate, max-age=0, s-maxage=0" }
       ]
