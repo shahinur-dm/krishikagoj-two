@@ -45,10 +45,12 @@ function extractText(htmlOrText, maxLen = 800) {
 
 function getFullDescription(excerpt, body, metaDesc, maxLen = EXCERPT_LEN) {
   const cleanExcerpt = extractText(excerpt, maxLen)
-  const cleanBody = extractText(body || metaDesc, maxLen)
-  if (!cleanExcerpt && !cleanBody) return ''
+  if (cleanExcerpt && cleanExcerpt.length >= 80) return cleanExcerpt
+  const cleanMeta = extractText(metaDesc, maxLen)
+  if (cleanMeta && cleanMeta.length >= 80) return cleanMeta
+  const cleanBody = extractText(body, maxLen)
+  if (!cleanExcerpt) return cleanBody || cleanMeta
   if (!cleanBody) return cleanExcerpt
-  if (!cleanExcerpt) return cleanBody
   if (cleanBody.startsWith(cleanExcerpt) || cleanBody.includes(cleanExcerpt)) {
     return cleanBody
   }
@@ -140,65 +142,101 @@ function applyPublicImage(url, map, width) {
 async function buildTopicGrid(settings) {
   const limit = Math.min(16, Math.max(1, Number(settings?.topicGridLimit) || 8))
   const topics = await Subcategory.find({ isActive: { $ne: false }, showOnHome: true })
-    .populate('category', 'name nameEn slug')
+    .populate('category', 'name slug')
+    .select('nameBn nameEn slug category homeFeatured homeSecondary homeOrder order')
     .sort({ homeOrder: 1, order: 1, nameBn: 1 })
     .limit(limit)
     .lean()
+    .catch(() => [])
+
   if (!topics.length) return []
 
-  const pickedIds = []
-  topics.forEach((topic) => {
-    if (isOid(topic.homeFeatured)) pickedIds.push(String(topic.homeFeatured).trim())
-    ;(topic.homeSecondary || []).forEach((id) => {
-      if (isOid(id)) pickedIds.push(String(id).trim())
-    })
-  })
-
-  const extra = await Article.find({
+  const topicIds = topics.map((t) => t._id)
+  const rawPosts = await Article.find({
+    subcategory: { $in: topicIds },
     isPublished: { $ne: false },
-    $or: [{ subcategory: { $in: topics.map((topic) => topic._id) } }, { _id: { $in: pickedIds } }],
   })
-    .select(HOME_LIST_SELECT)
-    .populate('category', 'name nameEn slug')
-    .populate('subcategory', 'nameBn nameEn slug')
+    .select('title titleEn slug excerpt excerptEn metaDescription image views publishedAt subcategory')
     .sort({ publishedAt: -1 })
-    .limit(80)
+    .limit(limit * 6)
     .lean()
+    .catch(() => [])
 
-  const byId = new Map(extra.map((article) => [String(article._id), slimArticle(article, 400)]))
-  const bySub = {}
-  extra.forEach((article) => {
-    const sid = String(article.subcategory?._id || article.subcategory || '')
-    if (!sid) return
-    if (!bySub[sid]) bySub[sid] = []
-    bySub[sid].push(slimArticle(article, 400))
+  const subMap = new Map(topics.map((t) => [String(t._id), t]))
+  const grouped = new Map()
+  topics.forEach((t) => grouped.set(String(t._id), []))
+
+  for (const post of rawPosts) {
+    const key = String(post.subcategory?._id || post.subcategory)
+    const list = grouped.get(key)
+    if (list && list.length < 6) {
+      list.push(post)
+    }
+  }
+
+  const extraIds = []
+  topics.forEach((t) => {
+    if (isOid(t.homeFeatured)) extraIds.push(String(t.homeFeatured))
+    if (isOid(t.homeSecondary)) extraIds.push(String(t.homeSecondary))
   })
+  const extraDocs = extraIds.length
+    ? await Article.find({ _id: { $in: extraIds }, isPublished: { $ne: false } })
+        .select('title titleEn slug excerpt excerptEn metaDescription image views publishedAt subcategory')
+        .lean()
+        .catch(() => [])
+    : []
+  const extraById = new Map(extraDocs.map((d) => [String(d._id), d]))
 
   return topics
     .map((topic) => {
-      const used = new Set()
-      const items = []
-      const push = (id) => {
-        const art = byId.get(String(id || '').trim())
-        if (!art) return
-        const key = String(art._id)
-        if (used.has(key)) return
-        used.add(key)
-        items.push(art)
-      }
-      push(topic.homeFeatured)
-      ;(topic.homeSecondary || []).forEach(push)
-      ;(bySub[String(topic._id)] || []).forEach((art) => {
-        if (items.length >= 8) return
-        push(art._id)
+      const posts = grouped.get(String(topic._id)) || []
+      const byId = new Map(posts.map((p) => [String(p._id), p]))
+      extraDocs.forEach((d) => {
+        if (String(d.subcategory?._id || d.subcategory) === String(topic._id)) {
+          byId.set(String(d._id), d)
+        }
       })
-      if (!items.length) return null
+
+      let feat = isOid(topic.homeFeatured) ? extraById.get(String(topic.homeFeatured)) || byId.get(String(topic.homeFeatured)) : null
+      let sec = isOid(topic.homeSecondary) ? extraById.get(String(topic.homeSecondary)) || byId.get(String(topic.homeSecondary)) : null
+
+      const pool = posts.filter((p) => {
+        const id = String(p._id)
+        return id !== String(feat?._id) && id !== String(sec?._id)
+      })
+
+      if (!feat && pool.length) feat = pool.shift()
+      if (!sec && pool.length) sec = pool.shift()
+
+      const list = pool.slice(0, 4)
+      const allCards = [feat, sec, ...list].filter(Boolean)
+      if (!allCards.length) return null
+
+      const shape = (a) =>
+        a
+          ? {
+              _id: a._id,
+              title: a.title,
+              titleEn: a.titleEn || '',
+              slug: a.slug,
+              excerpt: getFullDescription(a.excerpt, a.body, a.metaDescription, 160),
+              image: thumb(a.image, 400),
+              views: a.views || 0,
+              publishedAt: a.publishedAt,
+            }
+          : null
+
+      const items = allCards.map(shape).filter(Boolean)
+
       return {
         _id: topic._id,
         nameBn: topic.nameBn,
         nameEn: topic.nameEn || '',
         slug: topic.slug,
-        parentSlug: topic.category?.slug || settings?.topicGridSlug || 'motso',
+        category: topic.category ? { _id: topic.category._id, name: topic.category.name, slug: topic.category.slug } : null,
+        featured: shape(feat),
+        secondary: shape(sec),
+        list: list.map(shape).filter(Boolean),
         hasSub: true,
         items,
       }
@@ -298,405 +336,373 @@ router.get('/news', async (req, res) => {
   }
 })
 
+let pendingHomePromise = null
+
+async function buildHomePayload() {
+  const [
+    categories,
+    articles,
+    photos,
+    videos,
+    settings,
+    websites,
+    staff,
+    breakingNews,
+    opinions,
+    layoutTopics,
+    ads,
+    subcategories,
+  ] = await Promise.all([
+    Category.find({ isActive: true })
+      .select('name nameEn slug order')
+      .sort({ order: 1, name: 1 })
+      .lean()
+      .catch(() => []),
+    Article.find({ isPublished: { $ne: false } })
+      .select(HOME_LIST_SELECT)
+      .populate('category', 'name nameEn slug')
+      .populate('subcategory', 'nameBn nameEn slug')
+      .sort({ publishedAt: -1, createdAt: -1 })
+      .limit(NEWS_BATCH)
+      .lean()
+      .catch(() => []),
+    PhotoGallery.find().select('title photo type').sort({ createdAt: -1 }).limit(12).lean().catch(() => []),
+    VideoGallery.find()
+      .select('title embedCode thumbnail type')
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean()
+      .catch(() => []),
+    SiteSetting.findOne({ key: 'site' })
+      .select(
+        'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig latestPopularConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
+      )
+      .lean()
+      .catch(() => null),
+    ImportantWebsite.find({ isActive: { $ne: false } })
+      .select('websiteName websiteLink order')
+      .sort({ order: 1 })
+      .limit(12)
+      .lean()
+      .catch(() => []),
+    Staff.find({ isActive: { $ne: false }, type: { $in: ['Staff', 'Management'] } })
+      .select('name designation image link type order')
+      .sort({ order: 1 })
+      .limit(8)
+      .lean()
+      .catch(() => []),
+    BreakingNews.find({ isActive: { $ne: false }, status: 'published' })
+      .select('titleBn titleEn order publishedAt')
+      .sort({ order: 1, publishedAt: -1 })
+      .limit(20)
+      .lean()
+      .catch(() => []),
+    Opinion.find({ status: 'published', isActive: { $ne: false } })
+      .select('name title titleEn details image createdAt')
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean()
+      .catch(() => []),
+    LayoutTopic.find({ isActive: { $ne: false } })
+      .populate('category', 'name nameEn slug')
+      .populate('subcategory', 'nameBn nameEn slug')
+      .sort({ order: 1, createdAt: 1 })
+      .lean()
+      .catch(() => []),
+    Ad.find({ isActive: { $ne: false } })
+      .sort({ position: 1, order: 1, createdAt: -1 })
+      .lean()
+      .catch(() => []),
+    Subcategory.find({ isActive: true })
+      .populate('category', 'name slug')
+      .select('nameBn nameEn slug category order isActive showOnHome homeOrder homeFeatured homeSecondary')
+      .sort({ order: 1, nameBn: 1 })
+      .lean()
+      .catch(() => []),
+  ])
+
+  const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
+  const gridSlug = settings?.topicGridSlug || 'motso'
+  const subMap = new Map((subcategories || []).map((s) => [String(s._id), s]))
+
+  // Fetch latest published articles for every active content category in parallel (lean, indexed)
+  const categoryArticlesLists = await Promise.all(
+    contentCats.map((cat) =>
+      Article.find({
+        category: cat._id,
+        isPublished: { $ne: false },
+      })
+        .select(CATEGORY_CARD_SELECT)
+        .sort({ publishedAt: -1 })
+        .limit(cat.slug === gridSlug ? 16 : 10)
+        .lean()
+        .catch((err) => {
+          console.warn(`Category news query failed for ${cat.slug}:`, err.message)
+          return []
+        }),
+    ),
+  )
+
+  const allCatRawArts = categoryArticlesLists.flat()
+  const imageUrls = [
+    ...articles.map((a) => a.image),
+    ...allCatRawArts.map((a) => a.image),
+    ...photos.map((p) => p.photo),
+    ...opinions.map((o) => o.image),
+    ...staff.map((s) => s.image),
+  ]
+  const [cdnImages, topicGridEarly] = await Promise.all([
+    publicImageMap(imageUrls),
+    buildTopicGrid(settings).catch((err) => {
+      console.warn('topicGrid failed:', err.message)
+      return []
+    }),
+  ])
+
+  const slimArts = articles.map((a, i) => {
+    const row = slimArticle(a, i === 0 ? 800 : 400)
+    row.image = applyPublicImage(a.image, cdnImages, i === 0 ? 800 : 400)
+    return row
+  })
+  const popular = [...slimArts]
+    .sort((a, b) => (b.views || 0) - (a.views || 0) || (b.popular ? 1 : 0) - (a.popular ? 1 : 0))
+    .slice(0, 12)
+
+  const headlines = slimArts.filter((a) => a.headline).slice(0, 12)
+  const featured = slimArts.filter((a) => a.featured).slice(0, 12)
+  const latest = slimArts.filter((a) => a.latest).slice(0, 20)
+  const bigThumb = slimArts.find((a) => a.bigthumbnail)
+
+  // Build byCategory map for each category with proper articles and public CDN images
+  const byCategory = {}
+  for (let i = 0; i < contentCats.length; i++) {
+    const cat = contentCats[i]
+    const rawList = categoryArticlesLists[i] || []
+    byCategory[cat.slug] = rawList.map((a) => {
+      const sub = a.subcategory ? subMap.get(String(a.subcategory._id || a.subcategory)) : null
+      const row = slimArticle(
+        {
+          ...a,
+          category: {
+            _id: cat._id,
+            name: cat.name,
+            nameEn: cat.nameEn || '',
+            slug: cat.slug,
+          },
+          subcategory: sub || a.subcategory,
+        },
+        400,
+      )
+      row.image = applyPublicImage(a.image, cdnImages, 400)
+      return row
+    })
+  }
+
+  // Merge in any recent slimArts that belong to category if not already in list
+  for (const article of slimArts) {
+    const slug = article.category?.slug
+    if (!slug || !byCategory[slug]) continue
+    const id = String(article._id)
+    if (!byCategory[slug].some((a) => String(a._id) === id)) {
+      byCategory[slug].unshift(article)
+      const cap = slug === gridSlug ? 16 : 10
+      if (byCategory[slug].length > cap) {
+        byCategory[slug] = byCategory[slug].slice(0, cap)
+      }
+    }
+  }
+
+  const sectionSlots =
+    settings?.sectionSlots && typeof settings.sectionSlots === 'object'
+      ? settings.sectionSlots
+      : {}
+  const extraIds = []
+  for (const slug of Object.keys(byCategory)) {
+    const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
+      .map((id) => String(id || '').trim())
+      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+    ids.forEach((id) => extraIds.push(id))
+  }
+  const known = new Map(slimArts.map((a) => [String(a._id), a]))
+  Object.values(byCategory)
+    .flat()
+    .forEach((a) => known.set(String(a._id), a))
+
+  const need = [...new Set(extraIds)].filter((id) => !known.has(id))
+  if (need.length) {
+    const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
+      .select(HOME_LIST_SELECT)
+      .populate('category', 'name nameEn slug')
+      .populate('subcategory', 'nameBn nameEn slug')
+      .lean()
+      .catch(() => [])
+    extra.forEach((a) => {
+      const row = slimArticle(a, 400)
+      row.image = applyPublicImage(a.image, cdnImages, 400)
+      known.set(String(a._id), row)
+    })
+  }
+  for (const slug of Object.keys(byCategory)) {
+    const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+    if (!ids.length) continue
+    const used = new Set()
+    const next = []
+    ids.forEach((id) => {
+      const item = known.get(id)
+      if (item && !used.has(id)) {
+        next.push(item)
+        used.add(id)
+      }
+    })
+    ;(byCategory[slug] || []).forEach((item) => {
+      const id = String(item._id)
+      if (!used.has(id)) next.push(item)
+    })
+    byCategory[slug] = next.slice(0, slug === gridSlug ? 16 : 12)
+  }
+
+  const topicGrid = topicGridEarly || []
+
+  // Prefer bigthumbnail as lead if present
+  let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
+  if (bigThumb && featuredOut[0]?._id !== bigThumb._id) {
+    featuredOut = [bigThumb, ...featuredOut.filter((a) => a._id !== bigThumb._id)].slice(0, 16)
+  }
+
+  const byId = new Map(slimArts.map((a) => [String(a._id), a]))
+  popular.forEach((a) => byId.set(String(a._id), a))
+
+  const slots = settings?.homepageSlots || {}
+  const lpConfig = settings?.latestPopularConfig || {}
+  const lpLatestIds = (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+  const lpPopularIds = (Array.isArray(lpConfig.popularItems) ? lpConfig.popularItems : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+
+  const leadLayout = {
+    layoutType: slots.layoutType || settings?.homepageLayout || 'lead-three-col',
+    leadHero: (slots.leadHero && byId.get(String(slots.leadHero))) || featuredOut[0] || null,
+    leadSub1: (slots.leadSub1 && byId.get(String(slots.leadSub1))) || featuredOut[1] || null,
+    leadSub2: (slots.leadSub2 && byId.get(String(slots.leadSub2))) || featuredOut[2] || null,
+    leadSub3: (slots.leadSub3 && byId.get(String(slots.leadSub3))) || featuredOut[3] || null,
+    leadSide1: (slots.leadSide1 && byId.get(String(slots.leadSide1))) || popular[0] || null,
+    leadSide2: (slots.leadSide2 && byId.get(String(slots.leadSide2))) || popular[1] || null,
+    leadSide3: (slots.leadSide3 && byId.get(String(slots.leadSide3))) || popular[2] || null,
+    leadSide4: (slots.leadSide4 && byId.get(String(slots.leadSide4))) || popular[3] || null,
+    leadSide5: (slots.leadSide5 && byId.get(String(slots.leadSide5))) || popular[4] || null,
+    leadSide6: (slots.leadSide6 && byId.get(String(slots.leadSide6))) || popular[5] || null,
+    leadList1: (slots.leadList1 && byId.get(String(slots.leadList1))) || latest[0] || null,
+    leadList2: (slots.leadList2 && byId.get(String(slots.leadList2))) || latest[1] || null,
+    leadList3: (slots.leadList3 && byId.get(String(slots.leadList3))) || latest[2] || null,
+    leadList4: (slots.leadList4 && byId.get(String(slots.leadList4))) || latest[3] || null,
+    leadList5: (slots.leadList5 && byId.get(String(slots.leadList5))) || latest[4] || null,
+    leadList6: (slots.leadList6 && byId.get(String(slots.leadList6))) || latest[5] || null,
+    leadBottom1: (slots.leadBottom1 && byId.get(String(slots.leadBottom1))) || featuredOut[4] || null,
+    leadBottom2: (slots.leadBottom2 && byId.get(String(slots.leadBottom2))) || featuredOut[5] || null,
+    leadBottom3: (slots.leadBottom3 && byId.get(String(slots.leadBottom3))) || featuredOut[6] || null,
+    leadBottom4: (slots.leadBottom4 && byId.get(String(slots.leadBottom4))) || featuredOut[7] || null,
+    latestCustom: lpLatestIds.length ? lpLatestIds.map((id) => byId.get(id)).filter(Boolean) : null,
+    popularCustom: lpPopularIds.length ? lpPopularIds.map((id) => byId.get(id)).filter(Boolean) : null,
+  }
+
+  return {
+    categories: (categories || []).map((c) => ({
+      _id: c._id,
+      name: c.name,
+      nameEn: c.nameEn || '',
+      slug: c.slug,
+      order: c.order || 0,
+    })),
+    articles: slimArts,
+    featured: featuredOut,
+    headlines: headlines.length ? headlines : featuredOut.slice(0, 6),
+    popular,
+    latest,
+    leadLayout,
+    byCategory,
+    topicGrid,
+    photos: photos.map((p) => ({ ...p, photo: applyPublicImage(p.photo, cdnImages, 400) })),
+    videos: videos.map((v) => ({
+      _id: v._id,
+      title: v.title,
+      embedCode: v.embedCode,
+      thumbnail: thumb(v.thumbnail || '', 400) || ytThumb(v.embedCode),
+      type: v.type,
+    })),
+    websites,
+    staff,
+    ads: isAdsGloballyEnabled(settings) ? (ads || []).filter((a) => isLive(a)).map(slimAd) : [],
+    subcategories,
+    settings: slimSettings(settings),
+    breakingNews: (breakingNews || []).map((b) => ({
+      _id: b._id,
+      titleBn: b.titleBn,
+      titleEn: b.titleEn || '',
+      order: b.order ?? 1,
+    })),
+    opinions: (opinions || []).map((o) => ({
+      _id: o._id,
+      name: o.name,
+      title: o.title,
+      titleEn: o.titleEn || '',
+      details: extractText(o.details || '', EXCERPT_LEN),
+      image: applyPublicImage(o.image || '', cdnImages, 400),
+      createdAt: o.createdAt,
+    })),
+    layoutTopics: (layoutTopics || []).map((t) => ({
+      _id: t._id,
+      title: t.title,
+      titleEn: t.titleEn || '',
+      slug: t.slug,
+      icon: t.icon || 'fa-solid fa-leaf',
+      image: t.image || '',
+      url: t.url || '',
+      category: t.category ? { _id: t.category._id, name: t.category.name, nameEn: t.category.nameEn || '', slug: t.category.slug } : null,
+      subcategory: t.subcategory ? { _id: t.subcategory._id, nameBn: t.subcategory.nameBn, nameEn: t.subcategory.nameEn || '', slug: t.subcategory.slug } : null,
+      order: t.order || 0,
+      isActive: t.isActive !== false,
+    })),
+  }
+}
+
 router.get('/', async (req, res) => {
   try {
     const bust = Boolean(req.query.bust)
     setHomeCacheHeaders(res, bust)
 
-    const cached = bust ? null : cacheGet(CACHE_KEY)
-    if (cached) {
-      res.set('X-Cache', 'HIT')
-      return res.json(cached)
-    }
-
-    const started = Date.now()
-    const [
-      categories,
-      articles,
-      photos,
-      videos,
-      settings,
-      websites,
-      staff,
-      breakingNews,
-      opinions,
-      layoutTopics,
-      ads,
-      subcategories,
-    ] = await Promise.all([
-      Category.find({ isActive: true })
-        .select('name nameEn slug order')
-        .sort({ order: 1, name: 1 })
-        .lean()
-        .catch(() => []),
-      Article.find({ isPublished: { $ne: false } })
-        .select(HOME_LIST_SELECT)
-        .populate('category', 'name nameEn slug')
-        .populate('subcategory', 'nameBn nameEn slug')
-        .sort({ publishedAt: -1, createdAt: -1 })
-        .limit(NEWS_BATCH)
-        .lean()
-        .catch(() => []),
-      PhotoGallery.find().select('title photo type').sort({ createdAt: -1 }).limit(12).lean().catch(() => []),
-      VideoGallery.find()
-        .select('title embedCode thumbnail type')
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .lean()
-        .catch(() => []),
-      SiteSetting.findOne({ key: 'site' })
-        .select(
-          'siteName tagline hotline notice logo favicon faviconRev email phoneBn addressBn addressEn phoneEn aboutUs facebookPage liveTvLink liveTvEmbed chiefAdvisor publisher managingEditor social namaz seo themeColor homepageLayout homepageSlots sectionSlots sectionSidebars discussedConfig latestPopularConfig adsEnabled topicGridLimit topicGridSlug breakingTitle breakingTitleBn breakingTitleEn newsStoriesTitle newsStoriesTitleBn newsStoriesTitleEn newsStandingTitle',
-        )
-        .lean()
-        .catch(() => null),
-      ImportantWebsite.find({ isActive: { $ne: false } })
-        .select('websiteName websiteLink order')
-        .sort({ order: 1 })
-        .limit(12)
-        .lean()
-        .catch(() => []),
-      Staff.find({ isActive: { $ne: false }, type: { $in: ['Staff', 'Management'] } })
-        .select('name designation image link type order')
-        .sort({ order: 1 })
-        .limit(8)
-        .lean()
-        .catch(() => []),
-      BreakingNews.find({ isActive: { $ne: false }, status: 'published' })
-        .select('titleBn titleEn order publishedAt')
-        .sort({ order: 1, publishedAt: -1 })
-        .limit(20)
-        .lean()
-        .catch(() => []),
-      Opinion.find({ status: 'published', isActive: { $ne: false } })
-        .select('name title titleEn details image createdAt')
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .lean()
-        .catch(() => []),
-      LayoutTopic.find({ isActive: { $ne: false } })
-        .populate('category', 'name nameEn slug')
-        .populate('subcategory', 'nameBn nameEn slug')
-        .sort({ order: 1, createdAt: 1 })
-        .lean()
-        .catch(() => []),
-      Ad.find({ isActive: { $ne: false } })
-        .sort({ position: 1, order: 1, createdAt: -1 })
-        .lean()
-        .catch(() => []),
-      Subcategory.find({ isActive: true })
-        .populate('category', 'name slug')
-        .select('nameBn nameEn slug category order isActive showOnHome homeOrder homeFeatured homeSecondary')
-        .sort({ order: 1, nameBn: 1 })
-        .lean()
-        .catch(() => []),
-    ])
-
-    const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
-    const gridSlug = settings?.topicGridSlug || 'motso'
-    const subMap = new Map((subcategories || []).map((s) => [String(s._id), s]))
-
-    // Fetch latest published articles for every active content category in parallel (lean, indexed)
-    const categoryArticlesLists = await Promise.all(
-      contentCats.map((cat) =>
-        Article.find({
-          category: cat._id,
-          isPublished: { $ne: false },
-        })
-          .select(CATEGORY_CARD_SELECT)
-          .sort({ publishedAt: -1 })
-          .limit(cat.slug === gridSlug ? 16 : 10)
-          .lean()
-          .catch((err) => {
-            console.warn(`Category news query failed for ${cat.slug}:`, err.message)
-            return []
-          }),
-      ),
-    )
-
-    const allCatRawArts = categoryArticlesLists.flat()
-    const imageUrls = [
-      ...articles.map((a) => a.image),
-      ...allCatRawArts.map((a) => a.image),
-      ...photos.map((p) => p.photo),
-      ...opinions.map((o) => o.image),
-      ...staff.map((s) => s.image),
-    ]
-    const [cdnImages, topicGridEarly] = await Promise.all([
-      publicImageMap(imageUrls),
-      buildTopicGrid(settings).catch((err) => {
-        console.warn('topicGrid failed:', err.message)
-        return []
-      }),
-    ])
-
-    const slimArts = articles.map((a, i) => {
-      const row = slimArticle(a, i === 0 ? 800 : 400)
-      row.image = applyPublicImage(a.image, cdnImages, i === 0 ? 800 : 400)
-      return row
-    })
-    const popular = [...slimArts]
-      .sort((a, b) => (b.views || 0) - (a.views || 0) || (b.popular ? 1 : 0) - (a.popular ? 1 : 0))
-      .slice(0, 12)
-
-    const headlines = slimArts.filter((a) => a.headline).slice(0, 12)
-    const featured = slimArts.filter((a) => a.featured).slice(0, 12)
-    const latest = slimArts.filter((a) => a.latest).slice(0, 20)
-    const bigThumb = slimArts.find((a) => a.bigthumbnail)
-
-    // Build byCategory map for each category with proper articles and public CDN images
-    const byCategory = {}
-    for (let i = 0; i < contentCats.length; i++) {
-      const cat = contentCats[i]
-      const rawList = categoryArticlesLists[i] || []
-      byCategory[cat.slug] = rawList.map((a) => {
-        const sub = a.subcategory ? subMap.get(String(a.subcategory._id || a.subcategory)) : null
-        const row = slimArticle(
-          {
-            ...a,
-            category: {
-              _id: cat._id,
-              name: cat.name,
-              nameEn: cat.nameEn || '',
-              slug: cat.slug,
-            },
-            subcategory: sub || a.subcategory,
-          },
-          400,
-        )
-        row.image = applyPublicImage(a.image, cdnImages, 400)
-        return row
-      })
-    }
-
-    // Merge in any recent slimArts that belong to category if not already in list
-    for (const article of slimArts) {
-      const slug = article.category?.slug
-      if (!slug || !byCategory[slug]) continue
-      const id = String(article._id)
-      if (!byCategory[slug].some((a) => String(a._id) === id)) {
-        byCategory[slug].unshift(article)
-        const cap = slug === gridSlug ? 16 : 10
-        if (byCategory[slug].length > cap) {
-          byCategory[slug] = byCategory[slug].slice(0, cap)
-        }
+    if (!bust) {
+      const cached = cacheGet(CACHE_KEY)
+      if (cached) {
+        res.set('X-Cache', 'HIT')
+        return res.json(cached)
       }
     }
 
-    const sectionSlots =
-      settings?.sectionSlots && typeof settings.sectionSlots === 'object'
-        ? settings.sectionSlots
-        : {}
-    const extraIds = []
-    for (const slug of Object.keys(byCategory)) {
-      const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
-        .map((id) => String(id || '').trim())
-        .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-      ids.forEach((id) => extraIds.push(id))
-    }
-    const known = new Map(slimArts.map((a) => [String(a._id), a]))
-    Object.values(byCategory)
-      .flat()
-      .forEach((a) => known.set(String(a._id), a))
+    const started = Date.now()
+    let payload
+    let isCoalesced = false
 
-    const need = [...new Set(extraIds)].filter((id) => !known.has(id))
-    if (need.length) {
-      const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
-        .select(HOME_LIST_SELECT)
-        .populate('category', 'name nameEn slug')
-        .populate('subcategory', 'nameBn nameEn slug')
-        .lean()
-        .catch(() => [])
-      extra.forEach((a) => {
-        const row = slimArticle(a, 400)
-        row.image = applyPublicImage(a.image, cdnImages, 400)
-        known.set(String(a._id), row)
-      })
-    }
-    for (const slug of Object.keys(byCategory)) {
-      const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
-        .map((id) => String(id || '').trim())
-        .filter(Boolean)
-      if (!ids.length) continue
-      const used = new Set()
-      const next = []
-      ids.forEach((id) => {
-        const item = known.get(id)
-        if (item && !used.has(id)) {
-          next.push(item)
-          used.add(id)
+    if (pendingHomePromise) {
+      isCoalesced = true
+      payload = await pendingHomePromise
+    } else {
+      pendingHomePromise = (async () => {
+        try {
+          const fresh = await buildHomePayload()
+          cacheSet(CACHE_KEY, fresh, CACHE_TTL)
+          return fresh
+        } finally {
+          pendingHomePromise = null
         }
-      })
-      ;(byCategory[slug] || []).forEach((item) => {
-        const id = String(item._id)
-        if (!used.has(id)) next.push(item)
-      })
-      byCategory[slug] = next.slice(0, slug === gridSlug ? 16 : 12)
+      })()
+      payload = await pendingHomePromise
     }
 
-    const topicGrid = topicGridEarly || []
-
-    // Prefer bigthumbnail as lead if present
-    let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
-    if (bigThumb && featuredOut[0]?._id !== bigThumb._id) {
-      featuredOut = [bigThumb, ...featuredOut.filter((a) => a._id !== bigThumb._id)].slice(0, 16)
-    }
-
-    const byId = new Map(slimArts.map((a) => [String(a._id), a]))
-    popular.forEach((a) => byId.set(String(a._id), a))
-
-    const slots = settings?.homepageSlots || {}
-    const lpConfig = settings?.latestPopularConfig || {}
-    const lpLatestIds = (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
-      .map((id) => String(id || '').trim())
-      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-    const lpPopularIds = (Array.isArray(lpConfig.popularItems) ? lpConfig.popularItems : [])
-      .map((id) => String(id || '').trim())
-      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-
-    const wantedIds = [
-      slots.lead,
-      ...(slots.grid || []),
-      ...(slots.mid || []),
-      slots.story,
-      ...(slots.storyList || []),
-      ...lpLatestIds,
-      ...lpPopularIds,
-    ]
-      .map((id) => String(id || '').trim())
-      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-
-    const missing = [...new Set(wantedIds)].filter((id) => !byId.has(id))
-    if (missing.length) {
-      const extra = await Article.find({ _id: { $in: missing }, isPublished: true })
-        .select(HOME_LIST_SELECT)
-        .populate('category', 'name nameEn slug')
-        .lean()
-      extra.forEach((a) => byId.set(String(a._id), slimArticle(a, 400)))
-    }
-
-    const pickSlot = (id) => {
-      const key = String(id || '').trim()
-      return key && byId.get(key) ? byId.get(key) : null
-    }
-
-    const hasManualSlots = [
-      slots.lead,
-      ...(slots.grid || []),
-      ...(slots.mid || []),
-      slots.story,
-      ...(slots.storyList || []),
-    ].some((id) => /^[0-9a-fA-F]{24}$/.test(String(id || '').trim()))
-
-    const leadLayout = hasManualSlots
-      ? {
-          lead: pickSlot(slots.lead),
-          grid: Array.from({ length: 9 }, (_, i) => pickSlot((slots.grid || [])[i])),
-          mid: Array.from({ length: 8 }, (_, i) => pickSlot((slots.mid || [])[i])),
-          story: pickSlot(slots.story),
-          storyList: Array.from({ length: 8 }, (_, i) => pickSlot((slots.storyList || [])[i])),
-        }
-      : null
-
-    let finalLatest = latest.length >= 12 ? latest : slimArts.slice(0, NEWS_BATCH)
-    if (lpConfig.latestMode === 'manual' && lpLatestIds.length > 0) {
-      const manualLatest = []
-      const usedId = new Set()
-      lpLatestIds.forEach((id) => {
-        const item = byId.get(id)
-        if (item && !usedId.has(id)) {
-          manualLatest.push(item)
-          usedId.add(id)
-        }
-      })
-      finalLatest.forEach((item) => {
-        const id = String(item._id)
-        if (!usedId.has(id)) {
-          manualLatest.push(item)
-          usedId.add(id)
-        }
-      })
-      finalLatest = manualLatest.slice(0, NEWS_BATCH)
-    }
-
-    let finalPopular = popular.length ? popular : slimArts.slice(0, 16)
-    if (lpConfig.popularMode === 'manual' && lpPopularIds.length > 0) {
-      const manualPop = []
-      const usedId = new Set()
-      lpPopularIds.forEach((id) => {
-        const item = byId.get(id)
-        if (item && !usedId.has(id)) {
-          manualPop.push(item)
-          usedId.add(id)
-        }
-      })
-      finalPopular.forEach((item) => {
-        const id = String(item._id)
-        if (!usedId.has(id)) {
-          manualPop.push(item)
-          usedId.add(id)
-        }
-      })
-      finalPopular = manualPop.slice(0, 16)
-    }
-
-    const payload = {
-      categories,
-      headlines: headlines.length ? headlines : slimArts.slice(0, 16),
-      featured: featuredOut.length ? featuredOut : slimArts.slice(0, 16),
-      latest: finalLatest,
-      popular: finalPopular,
-      latestPopularConfig: lpConfig,
-      recent: slimArts.slice(0, NEWS_BATCH),
-      hasMoreNews: slimArts.length === NEWS_BATCH,
-      leadLayout,
-      byCategory,
-      topicGrid,
-      photos: photos.map((p) => ({ ...p, photo: applyPublicImage(p.photo, cdnImages, 400) })),
-      videos: videos.map((v) => ({
-        _id: v._id,
-        title: v.title,
-        embedCode: v.embedCode,
-        thumbnail: thumb(v.thumbnail || '', 400) || ytThumb(v.embedCode),
-        type: v.type,
-      })),
-      websites,
-      staff,
-      ads: isAdsGloballyEnabled(settings) ? (ads || []).filter((a) => isLive(a)).map(slimAd) : [],
-      subcategories,
-      settings: slimSettings(settings),
-      breakingNews: (breakingNews || []).map((b) => ({
-        _id: b._id,
-        titleBn: b.titleBn,
-        titleEn: b.titleEn || '',
-        order: b.order ?? 1,
-      })),
-      opinions: (opinions || []).map((o) => ({
-        _id: o._id,
-        name: o.name,
-        title: o.title,
-        titleEn: o.titleEn || '',
-        details: extractText(o.details || '', EXCERPT_LEN),
-        image: applyPublicImage(o.image || '', cdnImages, 400),
-        createdAt: o.createdAt,
-      })),
-      layoutTopics: (layoutTopics || []).map((t) => ({
-        _id: t._id,
-        title: t.title,
-        titleEn: t.titleEn || '',
-        slug: t.slug,
-        icon: t.icon || 'fa-solid fa-leaf',
-        image: t.image || '',
-        url: t.url || '',
-        category: t.category ? { _id: t.category._id, name: t.category.name, nameEn: t.category.nameEn || '', slug: t.category.slug } : null,
-        subcategory: t.subcategory ? { _id: t.subcategory._id, nameBn: t.subcategory.nameBn, nameEn: t.subcategory.nameEn || '', slug: t.subcategory.slug } : null,
-        order: t.order || 0,
-        isActive: t.isActive !== false,
-      })),
-    }
-
-    cacheSet(CACHE_KEY, payload, CACHE_TTL)
-    res.set('X-Cache', bust ? 'BYPASS' : 'MISS')
+    res.set('X-Cache', isCoalesced ? 'COALESCED' : (bust ? 'BYPASS' : 'MISS'))
     res.set('X-Home-Build-Ms', String(Date.now() - started))
     res.json(payload)
   } catch (err) {
