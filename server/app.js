@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import compression from 'compression'
 import mongoose from 'mongoose'
 import categoriesRouter from './routes/categories.js'
 import subcategoriesRouter from './routes/subcategories.js'
@@ -29,6 +30,7 @@ import { renderArticleOgHtml, extractNewsSlug } from './utils/ssrOgMeta.js'
 const app = express()
 
 app.use(cors())
+app.use(compression())
 app.use(express.json({ limit: '50mb' }))
 
 function extractNewsSsrSlug(req) {
