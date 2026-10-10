@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, mapArticle } from '../../api/client'
 import SafeImage from '../../components/SafeImage'
 import { useLang } from '../../context/LanguageContext'
+import { refreshSiteData } from '../../context/SiteDataContext'
 import { emptyItems, sectionSlotMeta, sectionVariant } from '../../lib/sectionLayouts'
 
 const EMPTY = {
@@ -361,6 +362,7 @@ export default function HomeLeadPage() {
           homepageSlots: cloneSlots(slots),
           newsStoriesTitle: storyTitle.trim() || 'নিউজ স্টোরিজ',
         })
+        await refreshSiteData().catch(() => {})
         setMessage('সেভ হয়েছে — হোমপেজে এই পজিশনেই খবর দেখাবে')
       } else {
         const ids = items.filter(Boolean)
@@ -372,6 +374,7 @@ export default function HomeLeadPage() {
         nextMap[pageKey] = { items: [...items] }
         const updated = await api.updateSettings({ sectionSlots: nextMap })
         setSettingsDoc(updated)
+        await refreshSiteData().catch(() => {})
         setMessage(`সেভ হয়েছে — ${selectedCat?.name || pageKey} সেকশনে এই পজিশনেই খবর দেখাবে`)
       }
       setTimeout(() => setMessage(''), 3500)

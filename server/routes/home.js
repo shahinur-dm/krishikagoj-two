@@ -18,7 +18,7 @@ import { HOME_LIST_SELECT } from '../utils/articleFields.js'
 import Media from '../models/Media.js'
 
 const router = Router()
-const CACHE_KEY = 'home:v49'
+const CACHE_KEY = 'home:v50'
 const CACHE_TTL = 180_000
 const NEWS_BATCH = 20
 const EXCERPT_LEN = 280
@@ -474,6 +474,7 @@ async function buildHomePayload() {
     }
   }
 
+  const slots = settings?.homepageSlots || {}
   const sectionSlots =
     settings?.sectionSlots && typeof settings.sectionSlots === 'object'
       ? settings.sectionSlots
@@ -485,14 +486,40 @@ async function buildHomePayload() {
       .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
     ids.forEach((id) => extraIds.push(id))
   }
+  const homeSlotIds = [
+    slots.lead,
+    slots.story,
+    ...(Array.isArray(slots.grid) ? slots.grid : []),
+    ...(Array.isArray(slots.mid) ? slots.mid : []),
+    ...(Array.isArray(slots.storyList) ? slots.storyList : []),
+  ]
+    .map((id) => String(id || '').trim())
+    .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+  homeSlotIds.forEach((id) => extraIds.push(id))
+
   const known = new Map(slimArts.map((a) => [String(a._id), a]))
   Object.values(byCategory)
     .flat()
     .forEach((a) => known.set(String(a._id), a))
 
+  const allArticleMap = new Map(allArticles.map((a) => [String(a._id), a]))
+  const toFetch = []
   const need = [...new Set(extraIds)].filter((id) => !known.has(id))
-  if (need.length) {
-    const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
+  for (const id of need) {
+    if (allArticleMap.has(id)) {
+      const a = allArticleMap.get(id)
+      const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
+      const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
+      const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, 400)
+      row.image = applyPublicImage(a.image, cdnImages, 400)
+      known.set(String(a._id), row)
+    } else {
+      toFetch.push(id)
+    }
+  }
+
+  if (toFetch.length) {
+    const extra = await Article.find({ _id: { $in: toFetch }, isPublished: { $ne: false } })
       .select(CATEGORY_CARD_SELECT)
       .lean()
       .catch(() => [])
@@ -534,9 +561,11 @@ async function buildHomePayload() {
   }
 
   const byId = new Map(slimArts.map((a) => [String(a._id), a]))
-  popular.forEach((a) => byId.set(String(a._id), a))
+  popular.forEach((a) => {
+    byId.set(String(a._id), a)
+    if (!known.has(String(a._id))) known.set(String(a._id), a)
+  })
 
-  const slots = settings?.homepageSlots || {}
   const lpConfig = settings?.latestPopularConfig || {}
   const lpLatestIds = (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
     .map((id) => String(id || '').trim())
@@ -545,9 +574,17 @@ async function buildHomePayload() {
     .map((id) => String(id || '').trim())
     .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
 
+  const resolveArt = (id) => (id ? known.get(String(id)) || byId.get(String(id)) || null : null)
+  const resolveList = (arr) => (Array.isArray(arr) ? arr.map((id) => (id ? resolveArt(id) : null)) : [])
+
   const leadLayout = {
     layoutType: slots.layoutType || settings?.homepageLayout || 'lead-three-col',
-    leadHero: (slots.leadHero && byId.get(String(slots.leadHero))) || featuredOut[0] || null,
+    lead: resolveArt(slots.lead),
+    grid: resolveList(slots.grid),
+    mid: resolveList(slots.mid),
+    story: resolveArt(slots.story),
+    storyList: resolveList(slots.storyList),
+    leadHero: resolveArt(slots.lead) || (slots.leadHero && byId.get(String(slots.leadHero))) || featuredOut[0] || null,
     leadSub1: (slots.leadSub1 && byId.get(String(slots.leadSub1))) || featuredOut[1] || null,
     leadSub2: (slots.leadSub2 && byId.get(String(slots.leadSub2))) || featuredOut[2] || null,
     leadSub3: (slots.leadSub3 && byId.get(String(slots.leadSub3))) || featuredOut[3] || null,
