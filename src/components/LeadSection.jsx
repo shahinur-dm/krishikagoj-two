@@ -107,32 +107,59 @@ function fillPreferred(manualList, count, prefer, pool, used) {
 
 function resolveSlots(leadLayout, featured, headlines, latest, popular, recent = []) {
   const pool = uniqueArticles(
-    recent,
-    featured,
-    headlines,
-    popular,
-    latest,
     leadLayout?.lead,
     leadLayout?.grid,
     leadLayout?.mid,
     leadLayout?.story,
     leadLayout?.storyList,
+    recent,
+    featured,
+    headlines,
+    popular,
+    latest,
   )
 
   const used = new Set()
   const prefer = (manual) => {
     const id = articleKey(manual)
     if (!id || used.has(id)) return null
-    const found = pool.find((a) => articleKey(a) === id) || manual
+    const found =
+      manual && typeof manual === 'object' && manual.title
+        ? manual
+        : pool.find((a) => articleKey(a) === id) || manual
     used.add(id)
     return found
   }
 
-  const lead = prefer(leadLayout?.lead) || take(pool, used, 1)[0] || null
-  const grid = fillPreferred(leadLayout?.grid, GRID_COUNT, prefer, pool, used)
-  const mid = fillPreferred(leadLayout?.mid, MID_COUNT, prefer, pool, used)
-  const story = prefer(leadLayout?.story) || take(pool, used, 1)[0] || null
-  const storyList = fillPreferred(leadLayout?.storyList, STORY_LIST_COUNT, prefer, pool, used)
+  // 1. Claim all explicitly assigned manual slots first so fallback items never displace them:
+  const leadManual = prefer(leadLayout?.lead)
+  const gridManual = Array.from({ length: GRID_COUNT }, (_, i) => prefer(leadLayout?.grid?.[i]))
+  const midManual = Array.from({ length: MID_COUNT }, (_, i) => prefer(leadLayout?.mid?.[i]))
+  const storyManual = prefer(leadLayout?.story)
+  const storyListManual = Array.from({ length: STORY_LIST_COUNT }, (_, i) => prefer(leadLayout?.storyList?.[i]))
+
+  // 2. Perform fallback filling only for empty/unassigned slots:
+  const lead = leadManual || take(pool, used, 1)[0] || null
+
+  const grid = []
+  for (let i = 0; i < GRID_COUNT; i++) {
+    const item = gridManual[i] || take(pool, used, 1)[0] || null
+    if (item) grid.push(item)
+  }
+
+  const mid = []
+  for (let i = 0; i < MID_COUNT; i++) {
+    const item = midManual[i] || take(pool, used, 1)[0] || null
+    if (item) mid.push(item)
+  }
+
+  const story = storyManual || take(pool, used, 1)[0] || null
+
+  const storyList = []
+  for (let i = 0; i < STORY_LIST_COUNT; i++) {
+    const item = storyListManual[i] || take(pool, used, 1)[0] || null
+    if (item) storyList.push(item)
+  }
 
   return { lead, grid, mid, story, storyList }
 }

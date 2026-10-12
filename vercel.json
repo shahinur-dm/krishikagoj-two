@@ -41,7 +41,7 @@
     {
       "source": "/api/home",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=15, s-maxage=60, stale-while-revalidate=300" }
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate, s-maxage=5" }
       ]
     },
     {
@@ -94,3 +94,4 @@
     }
   ]
 }
+

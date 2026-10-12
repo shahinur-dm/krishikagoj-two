@@ -12,6 +12,7 @@ import Opinion from '../models/Opinion.js'
 import SiteSetting from '../models/SiteSetting.js'
 import { translateArticleFields } from '../utils/translator.js'
 import { renderArticleOgHtml } from '../utils/ssrOgMeta.js'
+import { clearHomeMemoryCache } from './home.js'
 
 const router = Router()
 
@@ -105,6 +106,7 @@ function bustCaches() {
   cacheDel('articles')
   cacheDel('categories')
   cacheDel('catslug')
+  clearHomeMemoryCache()
 }
 
 function populateArticle(q) {
@@ -216,7 +218,7 @@ router.get('/admin/all', requireAuth, requirePermission('post', 'allpost'), asyn
     const filter = {}
     if (!canSeeAllPosts(req.user)) filter.authorUser = req.user._id
     const articles = await populateArticle(
-      Article.find(filter).select(ARTICLE_LIST_SELECT).sort({ createdAt: -1 }),
+      Article.find(filter).select(`${ARTICLE_LIST_SELECT} body`).sort({ createdAt: -1 }),
     ).lean()
     res.json(articles)
   } catch (err) {

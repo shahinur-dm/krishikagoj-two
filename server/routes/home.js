@@ -9,7 +9,7 @@ import ImportantWebsite from '../models/ImportantWebsite.js'
 import Staff from '../models/Staff.js'
 import Ad from '../models/Ad.js'
 import { slimAd, isLive } from './ads.js'
-import { cacheGet, cacheSet } from '../utils/cache.js'
+import { cacheGet, cacheSet, cacheDel } from '../utils/cache.js'
 import { isAdsGloballyEnabled } from '../utils/adsEnabled.js'
 import BreakingNews from '../models/BreakingNews.js'
 import Opinion from '../models/Opinion.js'
@@ -18,7 +18,7 @@ import { HOME_LIST_SELECT } from '../utils/articleFields.js'
 import Media from '../models/Media.js'
 
 const router = Router()
-const CACHE_KEY = 'home:v50'
+const CACHE_KEY = 'home:v49'
 const CACHE_TTL = 180_000
 const NEWS_BATCH = 20
 const EXCERPT_LEN = 280
@@ -64,10 +64,6 @@ function thumb(url, w = 480) {
     if (parts.length === 2) {
       return `${parts[0]}/upload/f_auto,q_auto,w_${w},c_fill,g_auto/${parts[1]}`
     }
-  }
-  if (url.includes('images.unsplash.com')) {
-    const base = url.split('?')[0]
-    return `${base}?auto=format&fit=crop&w=${w}&h=${Math.round(w * 0.66)}&q=70`
   }
   return url
 }
@@ -294,7 +290,7 @@ function setHomeCacheHeaders(res, bust) {
     res.set('Surrogate-Control', 'no-store')
     return
   }
-  res.set('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300')
+  res.set('Cache-Control', 'public, max-age=0, must-revalidate, s-maxage=5')
 }
 
 router.get('/news', async (req, res) => {
@@ -343,7 +339,7 @@ async function buildHomePayload() {
       .catch(() => []),
     Article.find({ isPublished: { $ne: false } })
       .select(CATEGORY_CARD_SELECT)
-      .sort({ publishedAt: -1 })
+      .sort({ publishedAt: -1, createdAt: -1 })
       .limit(350)
       .lean()
       .catch(() => []),
@@ -403,6 +399,37 @@ async function buildHomePayload() {
   ])
 
   const allArticles = articles || []
+  const lpConfig = settings?.latestPopularConfig || {}
+  const lpLatestIds = [
+    ...new Set(
+      (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
+        .map((id) => String(id || '').trim())
+        .filter((id) => /^[0-9a-fA-F]{24}$/.test(id)),
+    ),
+  ]
+  const latestById = new Map(allArticles.map((article) => [String(article._id), article]))
+  let manualLatestArticles = []
+  if (lpConfig.latestMode === 'manual' && lpLatestIds.length) {
+    const missingIds = lpLatestIds.filter((id) => !latestById.has(id))
+    if (missingIds.length) {
+      const extraLatest = await Article.find({
+        _id: { $in: missingIds },
+        isPublished: { $ne: false },
+      })
+        .select(CATEGORY_CARD_SELECT)
+        .lean()
+        .catch(() => [])
+      extraLatest.forEach((article) => latestById.set(String(article._id), article))
+    }
+    manualLatestArticles = lpLatestIds
+      .map((id) => latestById.get(id))
+      .filter((article) => article && article.isPublished !== false)
+  }
+  const latestSource =
+    lpConfig.latestMode === 'manual' && manualLatestArticles.length
+      ? manualLatestArticles
+      : allArticles.filter((article) => article.latest).slice(0, 20)
+
   const contentCats = (categories || []).filter((c) => c.slug && c.slug !== 'home')
   const gridSlug = settings?.topicGridSlug || 'motso'
   const catMap = new Map((categories || []).map((c) => [String(c._id), c]))
@@ -410,6 +437,7 @@ async function buildHomePayload() {
 
   const imageUrls = [
     ...allArticles.map((a) => a.image),
+    ...manualLatestArticles.map((a) => a.image),
     ...photos.map((p) => p.photo),
     ...opinions.map((o) => o.image),
     ...staff.map((s) => s.image),
@@ -429,7 +457,13 @@ async function buildHomePayload() {
 
   const headlines = slimArts.filter((a) => a.headline).slice(0, 12)
   const featured = slimArts.filter((a) => a.featured).slice(0, 12)
-  const latest = slimArts.filter((a) => a.latest).slice(0, 20)
+  const latest = latestSource.slice(0, 20).map((a, i) => {
+    const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
+    const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
+    const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, i === 0 ? 800 : 400)
+    row.image = applyPublicImage(a.image, cdnImages, i === 0 ? 800 : 400)
+    return row
+  })
   const bigThumb = slimArts.find((a) => a.bigthumbnail)
 
   // Build byCategory purely in memory from allArticles
@@ -474,18 +508,11 @@ async function buildHomePayload() {
     }
   }
 
-  const slots = settings?.homepageSlots || {}
   const sectionSlots =
     settings?.sectionSlots && typeof settings.sectionSlots === 'object'
       ? settings.sectionSlots
       : {}
-  const extraIds = []
-  for (const slug of Object.keys(byCategory)) {
-    const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
-      .map((id) => String(id || '').trim())
-      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-    ids.forEach((id) => extraIds.push(id))
-  }
+  const slots = settings?.homepageSlots || {}
   const homeSlotIds = [
     slots.lead,
     slots.story,
@@ -495,39 +522,32 @@ async function buildHomePayload() {
   ]
     .map((id) => String(id || '').trim())
     .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
-  homeSlotIds.forEach((id) => extraIds.push(id))
 
+  const extraIds = [...homeSlotIds]
+  for (const slug of Object.keys(byCategory)) {
+    const ids = (sectionSlots[slug]?.items || sectionSlots[slug] || [])
+      .map((id) => String(id || '').trim())
+      .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
+    ids.forEach((id) => extraIds.push(id))
+  }
   const known = new Map(slimArts.map((a) => [String(a._id), a]))
   Object.values(byCategory)
     .flat()
     .forEach((a) => known.set(String(a._id), a))
 
-  const allArticleMap = new Map(allArticles.map((a) => [String(a._id), a]))
-  const toFetch = []
   const need = [...new Set(extraIds)].filter((id) => !known.has(id))
-  for (const id of need) {
-    if (allArticleMap.has(id)) {
-      const a = allArticleMap.get(id)
-      const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
-      const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
-      const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, 400)
-      row.image = applyPublicImage(a.image, cdnImages, 400)
-      known.set(String(a._id), row)
-    } else {
-      toFetch.push(id)
-    }
-  }
-
-  if (toFetch.length) {
-    const extra = await Article.find({ _id: { $in: toFetch }, isPublished: { $ne: false } })
+  if (need.length) {
+    const extra = await Article.find({ _id: { $in: need }, isPublished: { $ne: false } })
       .select(CATEGORY_CARD_SELECT)
       .lean()
       .catch(() => [])
+    const extraImages = extra.map((a) => a.image).filter(Boolean)
+    const extraCdn = await publicImageMap(extraImages)
     extra.forEach((a) => {
       const populatedCat = a.category ? (catMap.get(String(a.category._id || a.category)) || a.category) : null
       const populatedSub = a.subcategory ? (subMap.get(String(a.subcategory._id || a.subcategory)) || a.subcategory) : null
-      const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, 400)
-      row.image = applyPublicImage(a.image, cdnImages, 400)
+      const row = slimArticle({ ...a, category: populatedCat, subcategory: populatedSub }, 800)
+      row.image = applyPublicImage(a.image, extraCdn.size ? extraCdn : cdnImages, 800)
       known.set(String(a._id), row)
     })
   }
@@ -554,58 +574,78 @@ async function buildHomePayload() {
 
   const topicGrid = buildTopicGrid(settings, subcategories, allArticles, cdnImages)
 
-  // Prefer bigthumbnail as lead if present
-  let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
-  if (bigThumb && featuredOut[0]?._id !== bigThumb._id) {
-    featuredOut = [bigThumb, ...featuredOut.filter((a) => a._id !== bigThumb._id)].slice(0, 16)
-  }
-
   const byId = new Map(slimArts.map((a) => [String(a._id), a]))
-  popular.forEach((a) => {
-    byId.set(String(a._id), a)
-    if (!known.has(String(a._id))) known.set(String(a._id), a)
-  })
+  popular.forEach((a) => byId.set(String(a._id), a))
+  latest.forEach((article) => byId.set(String(article._id), article))
+  known.forEach((article, id) => byId.set(id, article))
 
-  const lpConfig = settings?.latestPopularConfig || {}
-  const lpLatestIds = (Array.isArray(lpConfig.latestItems) ? lpConfig.latestItems : [])
-    .map((id) => String(id || '').trim())
-    .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
   const lpPopularIds = (Array.isArray(lpConfig.popularItems) ? lpConfig.popularItems : [])
     .map((id) => String(id || '').trim())
     .filter((id) => /^[0-9a-fA-F]{24}$/.test(id))
 
-  const resolveArt = (id) => (id ? known.get(String(id)) || byId.get(String(id)) || null : null)
-  const resolveList = (arr) => (Array.isArray(arr) ? arr.map((id) => (id ? resolveArt(id) : null)) : [])
+  const resolveArt = (id, w = 400) => {
+    if (!id) return null
+    const idStr = String(id).trim()
+    if (!idStr) return null
+    const hit = byId.get(idStr) || known.get(idStr)
+    if (hit) return hit
+    const raw = allArticles.find((a) => String(a._id) === idStr)
+    if (raw) {
+      const populatedCat = raw.category ? (catMap.get(String(raw.category._id || raw.category)) || raw.category) : null
+      const populatedSub = raw.subcategory ? (subMap.get(String(raw.subcategory._id || raw.subcategory)) || raw.subcategory) : null
+      const row = slimArticle({ ...raw, category: populatedCat, subcategory: populatedSub }, w)
+      row.image = applyPublicImage(raw.image, cdnImages, w)
+      byId.set(idStr, row)
+      return row
+    }
+    return null
+  }
+
+  const resolvedLead = resolveArt(slots.lead, 800)
+  const resolvedGrid = (Array.isArray(slots.grid) ? slots.grid : []).map((id) => resolveArt(id, 400))
+  const resolvedMid = (Array.isArray(slots.mid) ? slots.mid : []).map((id) => resolveArt(id, 400))
+  const resolvedStory = resolveArt(slots.story, 600)
+  const resolvedStoryList = (Array.isArray(slots.storyList) ? slots.storyList : []).map((id) => resolveArt(id, 400))
+
+  // Prefer bigthumbnail as lead if present, unless admin explicitly set a lead
+  let featuredOut = featured.length ? featured : (headlines.length ? headlines : latest).slice(0, 16)
+  if (resolvedLead) {
+    featuredOut = [resolvedLead, ...featuredOut.filter((a) => String(a._id) !== String(resolvedLead._id))].slice(0, 16)
+  } else if (bigThumb && featuredOut[0]?._id !== bigThumb._id) {
+    featuredOut = [bigThumb, ...featuredOut.filter((a) => a._id !== bigThumb._id)].slice(0, 16)
+  }
 
   const leadLayout = {
     layoutType: slots.layoutType || settings?.homepageLayout || 'lead-three-col',
-    lead: resolveArt(slots.lead),
-    grid: resolveList(slots.grid),
-    mid: resolveList(slots.mid),
-    story: resolveArt(slots.story),
-    storyList: resolveList(slots.storyList),
-    leadHero: resolveArt(slots.lead) || (slots.leadHero && byId.get(String(slots.leadHero))) || featuredOut[0] || null,
-    leadSub1: (slots.leadSub1 && byId.get(String(slots.leadSub1))) || featuredOut[1] || null,
-    leadSub2: (slots.leadSub2 && byId.get(String(slots.leadSub2))) || featuredOut[2] || null,
-    leadSub3: (slots.leadSub3 && byId.get(String(slots.leadSub3))) || featuredOut[3] || null,
-    leadSide1: (slots.leadSide1 && byId.get(String(slots.leadSide1))) || popular[0] || null,
-    leadSide2: (slots.leadSide2 && byId.get(String(slots.leadSide2))) || popular[1] || null,
-    leadSide3: (slots.leadSide3 && byId.get(String(slots.leadSide3))) || popular[2] || null,
-    leadSide4: (slots.leadSide4 && byId.get(String(slots.leadSide4))) || popular[3] || null,
-    leadSide5: (slots.leadSide5 && byId.get(String(slots.leadSide5))) || popular[4] || null,
-    leadSide6: (slots.leadSide6 && byId.get(String(slots.leadSide6))) || popular[5] || null,
-    leadList1: (slots.leadList1 && byId.get(String(slots.leadList1))) || latest[0] || null,
-    leadList2: (slots.leadList2 && byId.get(String(slots.leadList2))) || latest[1] || null,
-    leadList3: (slots.leadList3 && byId.get(String(slots.leadList3))) || latest[2] || null,
-    leadList4: (slots.leadList4 && byId.get(String(slots.leadList4))) || latest[3] || null,
-    leadList5: (slots.leadList5 && byId.get(String(slots.leadList5))) || latest[4] || null,
-    leadList6: (slots.leadList6 && byId.get(String(slots.leadList6))) || latest[5] || null,
-    leadBottom1: (slots.leadBottom1 && byId.get(String(slots.leadBottom1))) || featuredOut[4] || null,
-    leadBottom2: (slots.leadBottom2 && byId.get(String(slots.leadBottom2))) || featuredOut[5] || null,
-    leadBottom3: (slots.leadBottom3 && byId.get(String(slots.leadBottom3))) || featuredOut[6] || null,
-    leadBottom4: (slots.leadBottom4 && byId.get(String(slots.leadBottom4))) || featuredOut[7] || null,
-    latestCustom: lpLatestIds.length ? lpLatestIds.map((id) => byId.get(id)).filter(Boolean) : null,
-    popularCustom: lpPopularIds.length ? lpPopularIds.map((id) => byId.get(id)).filter(Boolean) : null,
+    lead: resolvedLead,
+    grid: resolvedGrid,
+    mid: resolvedMid,
+    story: resolvedStory,
+    storyList: resolvedStoryList,
+
+    // Legacy fields for backward compatibility
+    leadHero: resolvedLead || (slots.leadHero && resolveArt(slots.leadHero, 800)) || featuredOut[0] || null,
+    leadSub1: resolvedGrid[0] || (slots.leadSub1 && resolveArt(slots.leadSub1)) || featuredOut[1] || null,
+    leadSub2: resolvedGrid[1] || (slots.leadSub2 && resolveArt(slots.leadSub2)) || featuredOut[2] || null,
+    leadSub3: resolvedGrid[2] || (slots.leadSub3 && resolveArt(slots.leadSub3)) || featuredOut[3] || null,
+    leadSide1: resolvedMid[0] || (slots.leadSide1 && resolveArt(slots.leadSide1)) || popular[0] || null,
+    leadSide2: resolvedMid[1] || (slots.leadSide2 && resolveArt(slots.leadSide2)) || popular[1] || null,
+    leadSide3: resolvedMid[2] || (slots.leadSide3 && resolveArt(slots.leadSide3)) || popular[2] || null,
+    leadSide4: resolvedMid[3] || (slots.leadSide4 && resolveArt(slots.leadSide4)) || popular[3] || null,
+    leadSide5: resolvedMid[4] || (slots.leadSide5 && resolveArt(slots.leadSide5)) || popular[4] || null,
+    leadSide6: resolvedMid[5] || (slots.leadSide6 && resolveArt(slots.leadSide6)) || popular[5] || null,
+    leadList1: resolvedStoryList[0] || (slots.leadList1 && resolveArt(slots.leadList1)) || latest[0] || null,
+    leadList2: resolvedStoryList[1] || (slots.leadList2 && resolveArt(slots.leadList2)) || latest[1] || null,
+    leadList3: resolvedStoryList[2] || (slots.leadList3 && resolveArt(slots.leadList3)) || latest[2] || null,
+    leadList4: resolvedStoryList[3] || (slots.leadList4 && resolveArt(slots.leadList4)) || latest[3] || null,
+    leadList5: resolvedStoryList[4] || (slots.leadList5 && resolveArt(slots.leadList5)) || latest[4] || null,
+    leadList6: resolvedStoryList[5] || (slots.leadList6 && resolveArt(slots.leadList6)) || latest[5] || null,
+    leadBottom1: resolvedGrid[3] || (slots.leadBottom1 && resolveArt(slots.leadBottom1)) || featuredOut[4] || null,
+    leadBottom2: resolvedGrid[4] || (slots.leadBottom2 && resolveArt(slots.leadBottom2)) || featuredOut[5] || null,
+    leadBottom3: resolvedGrid[5] || (slots.leadBottom3 && resolveArt(slots.leadBottom3)) || featuredOut[6] || null,
+    leadBottom4: (slots.leadBottom4 && resolveArt(slots.leadBottom4)) || featuredOut[7] || null,
+    latestCustom: lpLatestIds.length ? lpLatestIds.map((id) => resolveArt(id)).filter(Boolean) : null,
+    popularCustom: lpPopularIds.length ? lpPopularIds.map((id) => resolveArt(id)).filter(Boolean) : null,
   }
 
   return {
@@ -673,7 +713,11 @@ router.get('/', async (req, res) => {
     const bust = Boolean(req.query.bust)
     setHomeCacheHeaders(res, bust)
 
-    if (!bust) {
+    if (bust) {
+      cacheDel('home')
+      pendingHomePromise = null
+      mediaMapCache.clear()
+    } else {
       const cached = cacheGet(CACHE_KEY)
       if (cached) {
         res.set('X-Cache', 'HIT')
@@ -708,5 +752,11 @@ router.get('/', async (req, res) => {
     res.status(500).json({ message: err.message })
   }
 })
+
+export function clearHomeMemoryCache() {
+  cacheDel('home')
+  pendingHomePromise = null
+  mediaMapCache.clear()
+}
 
 export default router

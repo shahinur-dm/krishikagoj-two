@@ -4,6 +4,7 @@ import Media from '../models/Media.js'
 import { requireAuth, requirePermission, requireSuperAdmin } from '../middleware/auth.js'
 import { cacheGet, cacheSet, cacheDel } from '../utils/cache.js'
 import { generateArticle } from '../utils/aiGenerator.js'
+import { clearHomeMemoryCache } from './home.js'
 
 const router = Router()
 
@@ -270,6 +271,7 @@ router.put('/', requireAuth, requirePermission('setting', 'ads', 'breaking', 'po
     ).lean()
     cacheDel('settings')
     cacheDel('home')
+    clearHomeMemoryCache()
     res.json(settings)
   } catch (err) {
     res.status(400).json({ message: err.message })

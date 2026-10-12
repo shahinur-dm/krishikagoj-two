@@ -227,12 +227,31 @@ export default function HomeLeadPage() {
         setMessage('')
         const params = { limit: '80' }
         if (pageKey !== 'home') params.category = pageKey
-        const [rows, settings] = await Promise.all([
+        const [rowsData, settings] = await Promise.all([
           api.getArticles(params),
           api.getSettings(),
         ])
         if (!alive) return
-        const mapped = (rows || []).map(mapArticle).filter(Boolean)
+        let mapped = (rowsData || []).map(mapArticle).filter(Boolean)
+        const savedIds = pageKey === 'home'
+          ? [
+              settings?.homepageSlots?.lead,
+              settings?.homepageSlots?.story,
+              ...(settings?.homepageSlots?.grid || []),
+              ...(settings?.homepageSlots?.mid || []),
+              ...(settings?.homepageSlots?.storyList || []),
+            ].filter(Boolean)
+          : (settings?.sectionSlots?.[pageKey]?.items || settings?.sectionSlots?.[pageKey] || []).filter(Boolean)
+
+        const knownSet = new Set(mapped.map((a) => String(a.id || a._id)))
+        const missingIds = [...new Set(savedIds)].filter((id) => id && !knownSet.has(String(id)))
+        if (missingIds.length) {
+          const extraDocs = await Promise.all(
+            missingIds.map((id) => api.getArticle(id).catch(() => null))
+          )
+          const validExtra = extraDocs.filter(Boolean).map(mapArticle).filter(Boolean)
+          mapped = [...mapped, ...validExtra]
+        }
         setArticles(mapped)
         setSettingsDoc(settings || {})
         setStoryTitle(settings?.newsStoriesTitle || settings?.newsStoriesTitleBn || 'নিউজ স্টোরিজ')
@@ -358,10 +377,11 @@ export default function HomeLeadPage() {
         const ids = [slots.lead, slots.story, ...slots.grid, ...slots.mid, ...slots.storyList].filter(Boolean)
         const dup = ids.filter((id, i) => ids.indexOf(id) !== i)
         if (dup.length) throw new Error('একই খবর একাধিক পজিশনে রাখা যাবে না')
-        await api.updateSettings({
+        const updated = await api.updateSettings({
           homepageSlots: cloneSlots(slots),
           newsStoriesTitle: storyTitle.trim() || 'নিউজ স্টোরিজ',
         })
+        setSettingsDoc(updated)
         await refreshSiteData().catch(() => {})
         setMessage('সেভ হয়েছে — হোমপেজে এই পজিশনেই খবর দেখাবে')
       } else {
